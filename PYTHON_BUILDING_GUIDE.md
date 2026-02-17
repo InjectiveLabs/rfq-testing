@@ -233,7 +233,6 @@ if not sig_hex.startswith("0x"):
 
 | Environment | WebSocket Base URL |
 |-------------|--------------------|
-| Devnet | `wss://devnet.api.injective.dev/injective_rfqrpc.InjectiveRFQRPC` |
 | Testnet | `wss://testnet.rfq.ws.injective.network/injective_rfqrpc.InjectiveRFQRPC` |
 
 Append `/TakerStream` or `/MakerStream` to the base URL.

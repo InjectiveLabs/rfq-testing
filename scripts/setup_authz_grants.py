@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Setup authz grants for MM and retail wallets on devnet.
+Setup authz grants for MM and retail wallets.
 
 This script grants the necessary authz permissions for the first N wallets
 to interact with the RFQ smart contract.
@@ -13,7 +13,7 @@ Usage:
     python scripts/setup_authz_grants.py [--env ENV] [--count COUNT]
     
 Examples:
-    python scripts/setup_authz_grants.py --env devnet0 --count 10
+    python scripts/setup_authz_grants.py --env testnet --count 10
 """
 
 # Suppress gRPC noise before any imports
@@ -61,7 +61,7 @@ async def grant_authz_for_wallet(
 
 async def main():
     parser = argparse.ArgumentParser(description="Setup authz grants for RFQ wallets")
-    parser.add_argument("--env", default="devnet0", help="Environment name (default: devnet0)")
+    parser.add_argument("--env", default="testnet", help="Environment name (default: testnet)")
     parser.add_argument("--count", type=int, default=10, help="Number of wallets to setup (default: 10)")
     parser.add_argument("--mm-only", action="store_true", help="Only setup MM wallets")
     parser.add_argument("--retail-only", action="store_true", help="Only setup retail wallets")

@@ -16,7 +16,7 @@ class Settings(BaseSettings):
     """Application settings loaded from environment variables.
     
     Credentials are stored per-environment with prefixes:
-    LOCAL_, DEVNET0_, DEVNET1_, DEVNET3_, TESTNET_
+    LOCAL_, TESTNET_
     
     The active environment is selected via RFQ_ENV, and the appropriate
     credentials are automatically used via computed properties.
@@ -28,7 +28,7 @@ class Settings(BaseSettings):
         extra="ignore",
     )
     
-    # Environment selection: local | devnet0 | devnet1 | devnet3 | testnet
+    # Environment selection: local | testnet
     rfq_env: str = Field(default="local", alias="RFQ_ENV")
     
     # ============================================================
@@ -40,32 +40,7 @@ class Settings(BaseSettings):
     local_load_test_mm_seed_phrase: Optional[str] = Field(default=None, alias="LOCAL_LOAD_TEST_MM_SEED_PHRASE")
     local_load_test_retail_seed_phrase: Optional[str] = Field(default=None, alias="LOCAL_LOAD_TEST_RETAIL_SEED_PHRASE")
     
-    # ============================================================
-    # Devnet0 Environment Credentials
-    # ============================================================
-    devnet0_admin_private_key: Optional[str] = Field(default=None, alias="DEVNET0_ADMIN_PRIVATE_KEY")
-    devnet0_retail_private_key: Optional[str] = Field(default=None, alias="DEVNET0_RETAIL_PRIVATE_KEY")
-    devnet0_mm_private_key: Optional[str] = Field(default=None, alias="DEVNET0_MM_PRIVATE_KEY")
-    devnet0_load_test_mm_seed_phrase: Optional[str] = Field(default=None, alias="DEVNET0_LOAD_TEST_MM_SEED_PHRASE")
-    devnet0_load_test_retail_seed_phrase: Optional[str] = Field(default=None, alias="DEVNET0_LOAD_TEST_RETAIL_SEED_PHRASE")
-    
-    # ============================================================
-    # Devnet1 Environment Credentials
-    # ============================================================
-    devnet1_admin_private_key: Optional[str] = Field(default=None, alias="DEVNET1_ADMIN_PRIVATE_KEY")
-    devnet1_retail_private_key: Optional[str] = Field(default=None, alias="DEVNET1_RETAIL_PRIVATE_KEY")
-    devnet1_mm_private_key: Optional[str] = Field(default=None, alias="DEVNET1_MM_PRIVATE_KEY")
-    devnet1_load_test_mm_seed_phrase: Optional[str] = Field(default=None, alias="DEVNET1_LOAD_TEST_MM_SEED_PHRASE")
-    devnet1_load_test_retail_seed_phrase: Optional[str] = Field(default=None, alias="DEVNET1_LOAD_TEST_RETAIL_SEED_PHRASE")
-    
-    # ============================================================
-    # Devnet3 Environment Credentials
-    # ============================================================
-    devnet3_admin_private_key: Optional[str] = Field(default=None, alias="DEVNET3_ADMIN_PRIVATE_KEY")
-    devnet3_retail_private_key: Optional[str] = Field(default=None, alias="DEVNET3_RETAIL_PRIVATE_KEY")
-    devnet3_mm_private_key: Optional[str] = Field(default=None, alias="DEVNET3_MM_PRIVATE_KEY")
-    devnet3_load_test_mm_seed_phrase: Optional[str] = Field(default=None, alias="DEVNET3_LOAD_TEST_MM_SEED_PHRASE")
-    devnet3_load_test_retail_seed_phrase: Optional[str] = Field(default=None, alias="DEVNET3_LOAD_TEST_RETAIL_SEED_PHRASE")
+
     
     # ============================================================
     # Testnet Environment Credentials
@@ -137,7 +112,7 @@ def load_environment_config(env_name: str, config_dir: Optional[Path] = None) ->
     """Load environment configuration from YAML file.
     
     Args:
-        env_name: Environment name (local, devnet, testnet)
+        env_name: Environment name (local, testnet)
         config_dir: Optional path to configs directory
         
     Returns:

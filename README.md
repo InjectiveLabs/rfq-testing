@@ -18,7 +18,7 @@ src/rfq_test/          # Core library
   ├── config.py        # Settings and environment config loader
   └── exceptions.py    # Custom exceptions
 
-configs/               # Environment configs (testnet, devnet, local)
+configs/               # Environment configs (testnet, local)
 scripts/               # Setup scripts (authz grants, maker registration, funding)
 examples/              # Standalone test scripts
 ```

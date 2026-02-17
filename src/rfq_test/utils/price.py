@@ -2,7 +2,7 @@
 
 Supports:
 - Static prices from config (for local testing)
-- Oracle prices from Injective chain (for devnet/testnet)
+- Oracle prices from Injective chain (for testnet)
 """
 
 import asyncio
@@ -66,7 +66,7 @@ class PriceFetcher:
     async def _get_oracle_price(self, market: MarketConfig) -> Decimal:
         """Get price from Injective oracle.
         
-        For devnet/testnet, we query the chain's oracle module.
+        For testnet, we query the chain's oracle module.
         """
         # Check cache
         import time
@@ -91,7 +91,7 @@ class PriceFetcher:
         """Fetch price from Injective LCD.
         
         Tries in order:
-        1. Exchange v2 derivative market (mark_price, human-readable) – preferred for devnet.
+        1. Exchange v2 derivative market (mark_price, human-readable) – preferred.
         2. Exchange v1beta1 derivative market (markPrice/oraclePrice, may be scaled).
         3. Oracle price by base/quote.
         Uses market.id so any configured market_id is supported.
@@ -100,7 +100,7 @@ class PriceFetcher:
         
         try:
             async with httpx.AsyncClient() as client:
-                # 1) Prefer v2 derivative market endpoint (devnet returns mark_price at top level)
+                # 1) Prefer v2 derivative market endpoint (returns mark_price at top level)
                 response = await client.get(
                     f"{lcd_url}/injective/exchange/v2/derivative/markets/{market.id}",
                     timeout=10.0,

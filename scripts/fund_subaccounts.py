@@ -9,7 +9,7 @@ Usage:
     python scripts/fund_subaccounts.py [--env ENV] [--count COUNT] [--amount AMOUNT]
     
 Examples:
-    python scripts/fund_subaccounts.py --env devnet0 --count 10 --amount 1000
+    python scripts/fund_subaccounts.py --env testnet --count 10 --amount 1000
 """
 
 import argparse
@@ -87,7 +87,7 @@ async def deposit_to_subaccount(
 
 async def main():
     parser = argparse.ArgumentParser(description="Fund subaccounts for RFQ testing")
-    parser.add_argument("--env", default="devnet0", help="Environment (default: devnet0)")
+    parser.add_argument("--env", default="testnet", help="Environment (default: testnet)")
     parser.add_argument("--count", type=int, default=10, help="Number of wallets to fund (default: 10)")
     parser.add_argument("--amount", type=float, default=1000, help="Amount of INJ to deposit (default: 1000)")
     parser.add_argument("--mm-only", action="store_true", help="Only fund MM wallets")
@@ -131,7 +131,7 @@ async def main():
         grpc_exchange_endpoint=grpc_exchange,
         grpc_explorer_endpoint=grpc_explorer,
         chain_id=config.chain.chain_id,
-        env="devnet",
+        env="testnet",
         chain_stream_endpoint=chain_stream,
         official_tokens_list_url="",
     )

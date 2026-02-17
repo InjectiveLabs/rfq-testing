@@ -142,18 +142,6 @@ class ContractClient:
                 )
             elif "888" in self.chain_config.chain_id:
                 self._network = Network.testnet()
-            elif "777" in self.chain_config.chain_id:
-                self._network = Network.custom(
-                    lcd_endpoint=self.chain_config.lcd_endpoint,
-                    tm_websocket_endpoint="",
-                    grpc_endpoint=grpc_main,
-                    grpc_exchange_endpoint=grpc_exchange,
-                    grpc_explorer_endpoint=grpc_explorer,
-                    chain_id=self.chain_config.chain_id,
-                    env="devnet",
-                    chain_stream_endpoint=chain_stream,
-                    official_tokens_list_url="",
-                )
             else:
                 self._network = Network.custom(
                     lcd_endpoint=self.chain_config.lcd_endpoint,

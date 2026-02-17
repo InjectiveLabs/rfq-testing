@@ -62,7 +62,7 @@ class MarketConfig(BaseModel):
 
 
 class FaucetConfig(BaseModel):
-    """Faucet configuration for devnet/testnet."""
+    """Faucet configuration for testnet."""
     model_config = ConfigDict(extra="forbid")
     
     enabled: bool = False
@@ -74,7 +74,7 @@ class EnvironmentConfig(BaseModel):
     """Full environment configuration."""
     model_config = ConfigDict(extra="forbid")
     
-    environment: Literal["local", "devnet0", "devnet1", "devnet3", "testnet"]
+    environment: Literal["local", "testnet"]
     chain: ChainConfig
     indexer: IndexerConfig
     contract: ContractConfig

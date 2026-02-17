@@ -17,7 +17,7 @@ Usage:
     python scripts/register_makers.py --dry-run
 
 Requires:
-    - RFQ_ENV environment variable (e.g., devnet0)
+    - RFQ_ENV environment variable (e.g., testnet)
     - {ENV}_ADMIN_PRIVATE_KEY in .env
     - {ENV}_LOAD_TEST_MM_SEED_PHRASE in .env
 """
@@ -221,7 +221,7 @@ async def main(
 
     if only_contract_reported:
         print(f"\nNote: {len(only_contract_reported)} maker(s) are reported as 'already registered' by the contract")
-        print("      but do not appear in list_makers (known contract/list_makers quirk on devnet).")
+        print("      but do not appear in list_makers (known contract/list_makers quirk).")
         print("      They are treated as whitelisted for this script.")
         for idx, addr in only_contract_reported:
             print(f"        Index {idx}: {addr}")
