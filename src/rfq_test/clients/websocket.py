@@ -9,6 +9,7 @@ import logging
 import ssl
 import struct
 import time
+import uuid
 from abc import ABC, abstractmethod
 from typing import AsyncIterator, Optional
 
@@ -24,8 +25,10 @@ from rfq_test.proto.rfq_messages import (
     CreateRFQRequestType,
     MakerStreamRequest,
     MakerStreamResponse,
+    QuoteStreamAck,
     RFQQuoteType,
     RFQRequestType,
+    RequestStreamAck,
     TakerStreamRequest,
     TakerStreamResponse,
 )
@@ -349,26 +352,27 @@ class TakerStreamClient(BaseStreamClient):
         Raises:
             IndexerValidationError: If server returns an error
         """
-        # Convert dict to protobuf message
         # Handle direction - convert to string if it's an int
         direction = request_data.get("direction", "")
         if isinstance(direction, int):
             direction = str(direction)
         
+        # Generate client_id if not provided (used for request correlation)
+        client_id = request_data.get("client_id") or str(uuid.uuid4())
+        
         # Server gets request_address from TakerStream connection metadata; request body uses CreateRFQRequestType
         request = CreateRFQRequestType(
-            rfq_id=int(request_data.get("rfq_id", 0)),
+            client_id=client_id,
             market_id=request_data.get("market_id", ""),
             direction=direction,
             margin=str(request_data.get("margin", "")),
             quantity=str(request_data.get("quantity", "")),
             worst_price=str(request_data.get("worst_price", "0")),
-            expiry=int(request_data.get("expiry", int(time.time()) + 300)),
-            status="open",
+            expiry=int(request_data.get("expiry", int(time.time() * 1000) + 300_000)),
         )
         msg = TakerStreamRequest(message_type="request", request=request)
         
-        logger.info(f"Sending request: RFQ#{request.rfq_id} {request.direction} qty={request.quantity}")
+        logger.info(f"Signing request: client_id={client_id} {request.direction} qty={request.quantity}")
         await self._send_raw(encode_grpc_message(msg))
         
         if wait_for_response:
@@ -401,9 +405,10 @@ class TakerStreamClient(BaseStreamClient):
                     response = {
                         "type": "ack",
                         "rfq_id": data.rfq_id,
+                        "client_id": data.client_id,
                         "status": data.status,
                     }
-                    logger.info(f"Request ACK received: RFQ#{data.rfq_id} status={data.status}")
+                    logger.info(f"Request ACK received: RFQ#{data.rfq_id} client_id={data.client_id} status={data.status}")
                     return response
                 
                 if msg_type == "error":
@@ -441,7 +446,7 @@ class TakerStreamClient(BaseStreamClient):
                 )
                 
                 if msg_type == "request_ack" and data.rfq_id == rfq_id:
-                    return {"rfq_id": data.rfq_id, "status": data.status}
+                    return {"rfq_id": data.rfq_id, "client_id": data.client_id, "status": data.status}
                 
                 if msg_type == "error":
                     raise IndexerValidationError(f"{data.code}: {data.message}")
@@ -799,6 +804,7 @@ class MakerStreamClient(BaseStreamClient):
         """Convert request protobuf to dict."""
         return {
             "rfq_id": str(request.rfq_id),
+            "client_id": request.client_id,
             "market_id": request.market_id,
             "direction": request.direction,
             "margin": request.margin,

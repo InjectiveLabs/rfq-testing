@@ -49,7 +49,7 @@ class SignQuoteData:
         """Convert to dict with exact field order for JSON.
 
         Contract order: c, ca, mi, id, t, td, tm, tq, m, mq, mm, p, e.
-        Contract expects 'id' and 'e' as numbers (not strings).
+        Contract expects 'id' as number and 'e' as {"ts": <timestamp>} or {"h": <height>}.
         """
         rfq_id_int = int(self.rfq_id) if isinstance(self.rfq_id, str) else self.rfq_id
         out = {}
@@ -67,7 +67,7 @@ class SignQuoteData:
         out["mq"] = self.mq
         out["mm"] = self.mm
         out["p"] = self.p
-        out["e"] = self.e
+        out["e"] = {"ts": self.e}
         return out
 
 

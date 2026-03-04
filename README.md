@@ -84,8 +84,8 @@ python examples/test_settlement.py
 |------|-------|
 | Chain ID | `injective-888` |
 | RFQ Contract | `inj1t8hyyle68vd0kzsdehxg0sywttrwmt58jzk29q` |
-| MakerStream WSS | `wss://testnet.rfq.ws.injective.network/injective_rfqrpc.InjectiveRFQRPC/MakerStream` |
-| TakerStream WSS | `wss://testnet.rfq.ws.injective.network/injective_rfqrpc.InjectiveRFQRPC/TakerStream` |
+| MakerStream WSS | `wss://testnet.rfq.ws.injective.network/injective_rfq_rpc.InjectiveRfqRPC/MakerStream` |
+| TakerStream WSS | `wss://testnet.rfq.ws.injective.network/injective_rfq_rpc.InjectiveRfqRPC/TakerStream` |
 | Chain gRPC | `testnet-grpc.injective.dev:443` |
 | Faucet | `https://testnet-faucet.injective.dev` |
 

@@ -154,7 +154,7 @@ The contract verifies the maker's signature by building a JSON payload and hashi
 | `mq` | maker_quantity | string |
 | `mm` | maker_margin | string |
 | `p` | price | string |
-| `e` | expiry | number (ms) |
+| `e` | expiry | object: `{"ts": <timestamp_ms>}` or `{"h": <block_height>}` |
 
 **Order matters.** Serialize with `json.dumps(..., separators=(",", ":"))` and no spaces. Do not use `sort_keys=True`.
 
@@ -179,7 +179,7 @@ def sign_quote(
     maker_margin: str,
     maker_quantity: str,
     price: str,
-    expiry: int,
+    expiry: int,  # timestamp in milliseconds
 ) -> str:
     """Sign a quote. Returns hex signature (without 0x prefix)."""
     payload = {
@@ -195,7 +195,7 @@ def sign_quote(
         "mq": maker_quantity,
         "mm": maker_margin,
         "p": price,
-        "e": expiry,
+        "e": {"ts": expiry},  # expiry as nested object with timestamp
     }
     json_str = json.dumps(payload, separators=(",", ":"))
     message_hash = keccak(json_str.encode("utf-8"))
@@ -233,7 +233,7 @@ if not sig_hex.startswith("0x"):
 
 | Environment | WebSocket Base URL |
 |-------------|--------------------|
-| Testnet | `wss://testnet.rfq.ws.injective.network/injective_rfqrpc.InjectiveRFQRPC` |
+| Testnet | `wss://testnet.rfq.ws.injective.network/injective_rfq_rpc.InjectiveRfqRPC` |
 
 Append `/TakerStream` or `/MakerStream` to the base URL.
 
@@ -271,13 +271,13 @@ The indexer expects a specific field order for `RFQQuoteType`. If you encode in 
 | 6 | margin | string |
 | 7 | quantity | string |
 | 8 | price | string |
-| 9 | expiry | uint64 |
+| 9 | expiry | RFQExpiryType (nested: timestamp, height) |
 | 10 | maker | string |
 | 11 | taker | string |
 | 12 | signature | string (hex with 0x) |
 | ... | (status, timestamps, etc.) | |
 
-Reference: [injective-indexer](https://github.com/InjectiveLabs/injective-indexer) `api/gen/grpc/injective_rfqrpc/pb/injective_rfqrpc.proto`.
+Reference: [injective-indexer](https://github.com/InjectiveLabs/injective-indexer) `api/gen/grpc/injective_rfq_rpc/pb/injective_rfq_rpc.proto`.
 
 ---
 
