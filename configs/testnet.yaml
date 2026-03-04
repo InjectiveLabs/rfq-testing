@@ -9,12 +9,12 @@ chain:
   chain_id: "injective-888"
   tx_timeout_seconds: 10
 
-# RFQ Indexer API (testnet). Server is gRPC-over-WS; path = /injective_rfqrpc.InjectiveRFQRPC/<Method> (see indexer proto).
+# RFQ Indexer API (testnet). Server is gRPC-over-WS; path = /injective_rfq_rpc.InjectiveRfqRPC/<Method> (see indexer proto).
 # Client appends /MakerStream or /TakerStream to ws_endpoint.
 indexer:
-  ws_endpoint: "wss://testnet.rfq.ws.injective.network/injective_rfqrpc.InjectiveRFQRPC"
+  ws_endpoint: "wss://testnet.rfq.ws.injective.network/injective_rfq_rpc.InjectiveRfqRPC"
   http_endpoint: "https://testnet.rfq.injective.network"
-  grpc_web_endpoint: "https://testnet.rfq.grpc.injective.network/injective_rfqrpc.InjectiveRFQRPC"
+  grpc_web_endpoint: "https://testnet.rfq.grpc.injective.network/injective_rfq_rpc.InjectiveRfqRPC"
 
 contract:
   address: "inj1t8hyyle68vd0kzsdehxg0sywttrwmt58jzk29q"
