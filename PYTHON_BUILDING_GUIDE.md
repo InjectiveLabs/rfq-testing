@@ -27,7 +27,7 @@ This guide helps you avoid common pitfalls and build correctly from day one. You
 
 **What this guide covers:** Grants, signing, indexer protocol, contract expectations, and lessons we learned the hard way.
 
-**What it does not cover:** Full end-to-end examples (see [rfq-ts-example](https://github.com/InjectiveLabs/rfq/tree/main/rfq-ts-example) or our scripts for reference).
+**What it does not cover:** Full end-to-end examples (see [examples/](./examples/) for TypeScript, Go, and Python reference scripts).
 
 ---
 

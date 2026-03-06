@@ -1,0 +1,43 @@
+{
+  "name": "rfq-js-example",
+  "version": "1.0.0",
+  "type": "module",
+  "description": "JavaScript examples for RFQ Indexer API with secp256k1 signing",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js",
+    "test": "node index.js",
+    "ts-retail": "tsx retail-scripts/main.ts",
+    "ts-mm": "tsx mm-scripts/main.ts",
+    "ts-retail-setup": "tsx retail-scripts/setup.ts",
+    "ts-mm-setup": "tsx mm-scripts/setup.ts",
+    "build": "tsc",
+    "build:watch": "tsc --watch"
+  },
+  "dependencies": {
+    "@grpc/grpc-js": "^1.9.0",
+    "@grpc/proto-loader": "^0.7.10",
+    "@injectivelabs/networks": "^1.17.4",
+    "@injectivelabs/sdk-ts": "^1.17.4",
+    "@injectivelabs/ts-types": "^1.17.4",
+    "@injectivelabs/utils": "^1.17.4",
+    "dotenv": "^17.2.3",
+    "ethers": "^6.10.0",
+    "google-proto-files": "^4.0.0",
+    "ws": "^8.19.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.5",
+    "@types/ws": "^8.5.13",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.3"
+  },
+  "keywords": [
+    "rfq",
+    "indexer",
+    "secp256k1",
+    "crypto"
+  ],
+  "author": "",
+  "license": "MIT"
+}
