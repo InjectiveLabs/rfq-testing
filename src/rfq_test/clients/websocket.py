@@ -25,29 +25,19 @@ from rfq_test.proto.rfq_messages import (
     CreateRFQRequestType,
     MakerStreamRequest,
     MakerStreamResponse,
-    QuoteStreamAck,
     RFQQuoteType,
-    RFQRequestType,
-    RequestStreamAck,
     TakerStreamRequest,
     TakerStreamResponse,
 )
 
 logger = logging.getLogger(__name__)
 
-# gRPC-web WebSocket subprotocol
 GRPC_WS_SUBPROTOCOL = "grpc-ws"
-
-# Ping interval to keep connection alive (server requires this)
 PING_INTERVAL_SECONDS = 1.0
 
 
 def _format_connection_closed(exc: Exception) -> str:
-    """Format ConnectionClosed for logging: code and reason so we can see why the server closed.
-    Common codes: 1000=normal closure, 1008=policy, 1011=server error. If reason is empty,
-    check the previous log line for 'Stream error' (indexer may send an error message before closing).
-    Uses rcvd.code/rcvd.reason (websockets 13.1+) to avoid deprecation warnings.
-    """
+    """Format ConnectionClosed for logging."""
     rcvd = getattr(exc, "rcvd", None)
     if rcvd is not None:
         code = getattr(rcvd, "code", None)
@@ -66,7 +56,7 @@ def encode_grpc_message(message) -> bytes:
     Format: [1 byte compression flag][4 bytes length BE][protobuf payload]
     """
     payload = message.encode()
-    header = struct.pack(">BI", 0, len(payload))  # compression=0, length as big-endian uint32
+    header = struct.pack(">BI", 0, len(payload))
     return header + payload
 
 
@@ -80,7 +70,6 @@ def decode_grpc_message(data: bytes, message_type):
     
     compression_flag = data[0]
     if compression_flag == 0x80:
-        # Trailer frame, ignore
         return None
     if compression_flag != 0:
         logger.warning(f"Unsupported compression flag: {compression_flag}")
@@ -94,6 +83,9 @@ def decode_grpc_message(data: bytes, message_type):
 
 class BaseStreamClient(ABC):
     """Base class for RFQ stream clients."""
+    
+    MAX_RECONNECT_ATTEMPTS = 3
+    RECONNECT_DELAY_SECONDS = 1.0
     
     def __init__(self, base_url: str, timeout: float = 10.0):
         """Initialize stream client.
@@ -109,6 +101,8 @@ class BaseStreamClient(ABC):
         self._ping_task: Optional[asyncio.Task] = None
         self._receive_task: Optional[asyncio.Task] = None
         self._message_queue: asyncio.Queue = asyncio.Queue()
+        self._reconnect_count = 0
+        self._auto_reconnect = True
     
     @property
     @abstractmethod
@@ -126,7 +120,6 @@ class BaseStreamClient(ABC):
         try:
             logger.info(f"Connecting to {self.url}")
             
-            # Create SSL context with proper certificates for wss:// connections
             ssl_context = None
             if self.url.startswith("wss://"):
                 ssl_context = ssl.create_default_context(cafile=certifi.where())
@@ -141,11 +134,9 @@ class BaseStreamClient(ABC):
             )
             self._connected = True
             
-            # Start background tasks
             self._receive_task = asyncio.create_task(self._receive_loop())
             self._ping_task = asyncio.create_task(self._ping_loop())
             
-            # Send initial ping so server gets a frame immediately (avoids idle-close before first scheduled ping)
             try:
                 await self._send_ping()
             except Exception as e:
@@ -158,27 +149,68 @@ class BaseStreamClient(ABC):
         except Exception as e:
             raise IndexerConnectionError(f"Failed to connect: {e}") from e
     
-    async def close(self) -> None:
-        """Close the WebSocket connection."""
+    @property
+    def is_connected(self) -> bool:
+        """True if WebSocket is open and background loops are running."""
+        if not self._connected or self._ws is None:
+            return False
+        return self._ws.close_code is None
+
+    async def ensure_connected(self) -> bool:
+        """Check connection and reconnect if needed. Returns True if connected."""
+        if self.is_connected:
+            return True
+        return await self._reconnect()
+
+    async def _reconnect(self) -> bool:
+        """Attempt to reconnect with retries. Returns True on success."""
+        for attempt in range(1, self.MAX_RECONNECT_ATTEMPTS + 1):
+            try:
+                logger.warning(
+                    "Reconnecting %s (attempt %d/%d) ...",
+                    self.url, attempt, self.MAX_RECONNECT_ATTEMPTS,
+                )
+                await self._cleanup_connection()
+                await self.connect()
+                self._reconnect_count += 1
+                logger.info("Reconnected to %s (total reconnects: %d)", self.url, self._reconnect_count)
+                return True
+            except Exception as e:
+                logger.warning("Reconnect attempt %d failed: %s", attempt, e)
+                if attempt < self.MAX_RECONNECT_ATTEMPTS:
+                    await asyncio.sleep(self.RECONNECT_DELAY_SECONDS * attempt)
+        logger.error("Failed to reconnect after %d attempts", self.MAX_RECONNECT_ATTEMPTS)
+        return False
+
+    async def _cleanup_connection(self) -> None:
+        """Stop background tasks and close socket without raising."""
         self._connected = False
-        
         if self._ping_task:
             self._ping_task.cancel()
             try:
                 await self._ping_task
-            except asyncio.CancelledError:
+            except (asyncio.CancelledError, Exception):
                 pass
-        
+            self._ping_task = None
         if self._receive_task:
             self._receive_task.cancel()
             try:
                 await self._receive_task
-            except asyncio.CancelledError:
+            except (asyncio.CancelledError, Exception):
                 pass
-        
+            self._receive_task = None
         if self._ws:
-            await self._ws.close()
-            logger.info("WebSocket connection closed")
+            try:
+                await self._ws.close()
+            except Exception:
+                pass
+            self._ws = None
+
+    async def close(self) -> None:
+        """Close the WebSocket connection."""
+        self._auto_reconnect = False
+        await self._cleanup_connection()
+        logger.info("WebSocket connection closed")
     
     async def __aenter__(self):
         await self.connect()
@@ -196,13 +228,14 @@ class BaseStreamClient(ABC):
             except asyncio.CancelledError:
                 break
             except websockets.ConnectionClosed as e:
-                # Server closed the connection; log code and reason so we can see why (e.g. 1000=normal, 1008=policy)
                 if self._connected:
                     logger.warning("WebSocket connection closed: %s", _format_connection_closed(e))
+                    self._connected = False
                 break
             except Exception as e:
                 if self._connected:
                     logger.error(f"Ping error: {e}")
+                    self._connected = False
                 break
     
     @abstractmethod
@@ -227,7 +260,7 @@ class TakerStreamClient(BaseStreamClient):
 
     Takers send RFQ requests and receive quotes. The indexer requires
     request_address (taker's Injective address) as gRPC metadata when
-    opening the stream; pass it to connect successfully.
+    opening the stream.
     """
 
     def __init__(
@@ -259,7 +292,6 @@ class TakerStreamClient(BaseStreamClient):
                 ssl_context = ssl.create_default_context(cafile=certifi.where())
             additional_headers: dict[str, str] = {}
             if self._request_address:
-                # Indexer expects gRPC metadata key "request_address" (see DecodeTakerStreamRequest)
                 additional_headers["request_address"] = self._request_address
             self._ws = await asyncio.wait_for(
                 websockets.connect(
@@ -294,7 +326,6 @@ class TakerStreamClient(BaseStreamClient):
             try:
                 data = await self._ws.recv()
                 
-                # Skip string messages (headers)
                 if isinstance(data, str):
                     logger.debug(f"Received header: {data}")
                     continue
@@ -303,11 +334,9 @@ class TakerStreamClient(BaseStreamClient):
                 if response is None:
                     continue
                 
-                # Handle different message types
                 msg_type = response.message_type
                 
                 if msg_type == "pong":
-                    # Silent pong, just connection keepalive
                     pass
                 
                 elif msg_type == "quote":
@@ -342,7 +371,7 @@ class TakerStreamClient(BaseStreamClient):
         """Send an RFQ request.
         
         Args:
-            request_data: Request parameters (rfq_id, market_id, direction, etc.)
+            request_data: Request parameters (market_id, direction, etc.)
             wait_for_response: If True, wait for ACK or error response
             response_timeout: Timeout for waiting for response
             
@@ -352,15 +381,11 @@ class TakerStreamClient(BaseStreamClient):
         Raises:
             IndexerValidationError: If server returns an error
         """
-        # Handle direction - convert to string if it's an int
         direction = request_data.get("direction", "")
         if isinstance(direction, int):
             direction = str(direction)
         
-        # Generate client_id if not provided (used for request correlation)
         client_id = request_data.get("client_id") or str(uuid.uuid4())
-        
-        # Server gets request_address from TakerStream connection metadata; request body uses CreateRFQRequestType
         request = CreateRFQRequestType(
             client_id=client_id,
             market_id=request_data.get("market_id", ""),
@@ -371,23 +396,21 @@ class TakerStreamClient(BaseStreamClient):
             expiry=int(request_data.get("expiry", int(time.time() * 1000) + 300_000)),
         )
         msg = TakerStreamRequest(message_type="request", request=request)
-        
-        logger.info(f"Signing request: client_id={client_id} {request.direction} qty={request.quantity}")
+        logger.info(f"Sending request: client_id={client_id} {request.direction} qty={request.quantity}")
         await self._send_raw(encode_grpc_message(msg))
-        
         if wait_for_response:
-            return await self._wait_for_response(request.rfq_id, response_timeout)
+            return await self._wait_for_response(client_id, response_timeout)
         return None
     
-    async def _wait_for_response(self, rfq_id: int, timeout: float) -> dict:
+    async def _wait_for_response(self, client_id: str, timeout: float) -> dict:
         """Wait for ACK or error response after sending a request.
         
         Args:
-            rfq_id: Request ID to wait for
+            client_id: Client ID used to identify the request
             timeout: Maximum wait time
             
         Returns:
-            Response dict with type and data
+            Response dict with type, rfq_id, client_id, and status
             
         Raises:
             IndexerValidationError: If server returns an error
@@ -408,7 +431,7 @@ class TakerStreamClient(BaseStreamClient):
                         "client_id": data.client_id,
                         "status": data.status,
                     }
-                    logger.info(f"Request ACK received: RFQ#{data.rfq_id} client_id={data.client_id} status={data.status}")
+                    logger.info(f"Request ACK received: RFQ#{data.rfq_id} status={data.status}")
                     return response
                 
                 if msg_type == "error":
@@ -416,16 +439,14 @@ class TakerStreamClient(BaseStreamClient):
                     logger.warning(f"Request error received: {error_msg}")
                     raise IndexerValidationError(error_msg)
                 
-                # Put back other messages (e.g., quotes)
                 await self._message_queue.put((msg_type, data))
                 await asyncio.sleep(0.01)
                 
             except asyncio.TimeoutError:
                 break
         
-        # No response received - log this
-        logger.warning(f"No response received for RFQ#{rfq_id} within {timeout}s (no ACK, no error)")
-        return {"type": "no_response", "rfq_id": rfq_id}
+        logger.warning(f"No response received for request {client_id} within {timeout}s (no ACK, no error)")
+        return {"type": "no_response", "rfq_id": 0}
     
     async def wait_for_ack(self, rfq_id: int, timeout: float = 5.0) -> dict:
         """Wait for request acknowledgment.
@@ -446,12 +467,11 @@ class TakerStreamClient(BaseStreamClient):
                 )
                 
                 if msg_type == "request_ack" and data.rfq_id == rfq_id:
-                    return {"rfq_id": data.rfq_id, "client_id": data.client_id, "status": data.status}
+                    return {"rfq_id": data.rfq_id, "status": data.status}
                 
                 if msg_type == "error":
                     raise IndexerValidationError(f"{data.code}: {data.message}")
                 
-                # Put back other messages
                 await self._message_queue.put((msg_type, data))
                 await asyncio.sleep(0.01)
                 
@@ -484,7 +504,6 @@ class TakerStreamClient(BaseStreamClient):
                 if msg_type == "error":
                     raise IndexerValidationError(f"{data.code}: {data.message}")
                 
-                # Put back other messages
                 await self._message_queue.put((msg_type, data))
                 await asyncio.sleep(0.01)
                 
@@ -494,10 +513,7 @@ class TakerStreamClient(BaseStreamClient):
         raise IndexerTimeoutError(f"No quote for request {rfq_id} within {timeout}s")
     
     async def get_next_event(self, timeout: float = 1.0) -> Optional[tuple]:
-        """Get the next stream event (request_ack, quote, error). Returns None on timeout.
-        
-        Useful for monitoring the stream without accepting quotes.
-        """
+        """Get the next stream event (request_ack, quote, error). Returns None on timeout."""
         try:
             return await asyncio.wait_for(self._message_queue.get(), timeout=timeout)
         except asyncio.TimeoutError:
@@ -522,15 +538,13 @@ class TakerStreamClient(BaseStreamClient):
                 remaining = timeout - (time.monotonic() - start)
                 msg_type, data = await asyncio.wait_for(
                     self._message_queue.get(),
-                    timeout=min(remaining, 1.0),  # Check every second
+                    timeout=min(remaining, 1.0),
                 )
                 
                 if msg_type == "quote" and data.rfq_id == rfq_id:
                     quotes.append(self._quote_to_dict(data))
                     if len(quotes) >= min_quotes:
-                        # Got minimum, wait a bit more for additional quotes
                         await asyncio.sleep(0.5)
-                        # Drain any remaining quotes
                         while not self._message_queue.empty():
                             try:
                                 msg_type, data = self._message_queue.get_nowait()
@@ -540,8 +554,11 @@ class TakerStreamClient(BaseStreamClient):
                                 break
                         break
                 else:
-                    # Put back other messages
                     await self._message_queue.put((msg_type, data))
+                    # Yield to event loop so ping task can run
+                    # Without this, re-reading the same non-matching message creates
+                    # a hot loop that starves the ping task → server disconnects
+                    await asyncio.sleep(0)
                     
             except asyncio.TimeoutError:
                 if quotes:
@@ -574,9 +591,7 @@ class MakerStreamClient(BaseStreamClient):
     
     Usage:
         async with MakerStreamClient(ws_url) as client:
-            # Wait for requests
             async for request in client.requests(timeout=60):
-                # Build and send quote
                 await client.send_quote(quote_data)
     """
     
@@ -595,7 +610,6 @@ class MakerStreamClient(BaseStreamClient):
             try:
                 data = await self._ws.recv()
                 
-                # Skip string messages (headers)
                 if isinstance(data, str):
                     logger.debug(f"Received header: {data}")
                     continue
@@ -651,7 +665,6 @@ class MakerStreamClient(BaseStreamClient):
         Raises:
             IndexerValidationError: If server returns an error
         """
-        # Indexer requires "long" or "short" (not 0/1 or "0"/"1")
         taker_direction = quote_data.get("taker_direction", quote_data.get("direction", ""))
         if taker_direction in (0, "0"):
             taker_direction = "long"
@@ -662,7 +675,6 @@ class MakerStreamClient(BaseStreamClient):
         else:
             taker_direction = str(taker_direction).lower() if isinstance(taker_direction, str) else "long"
         
-        # Indexer (Go hexutil.Decode) expects hex with 0x prefix
         signature = quote_data.get("signature", "")
         if signature and not signature.startswith("0x"):
             signature = "0x" + signature
@@ -694,18 +706,7 @@ class MakerStreamClient(BaseStreamClient):
         return None
     
     async def _wait_for_quote_response(self, rfq_id: int, timeout: float) -> dict:
-        """Wait for ACK or error response after sending a quote.
-        
-        Args:
-            rfq_id: RFQ ID the quote is for
-            timeout: Maximum wait time
-            
-        Returns:
-            Response dict with type and data
-            
-        Raises:
-            IndexerValidationError: If server returns an error
-        """
+        """Wait for ACK or error response after sending a quote."""
         start = time.monotonic()
         while (time.monotonic() - start) < timeout:
             try:
@@ -729,22 +730,21 @@ class MakerStreamClient(BaseStreamClient):
                     logger.warning(f"Quote error received: {error_msg}")
                     raise IndexerValidationError(error_msg)
                 
-                # Put back other messages (e.g., requests)
                 await self._message_queue.put((msg_type, data))
                 await asyncio.sleep(0.01)
                 
             except asyncio.TimeoutError:
                 break
         
-        # No response received - log this
         logger.warning(f"No response received for quote on RFQ#{rfq_id} within {timeout}s (no ACK, no error)")
         return {"type": "no_response", "rfq_id": rfq_id}
     
-    async def wait_for_request(self, timeout: float = 30.0) -> dict:
-        """Wait for an RFQ request.
+    async def wait_for_request(self, timeout: float = 30.0, client_id: str = None) -> dict:
+        """Wait for an RFQ request, optionally filtering by client_id.
         
         Args:
             timeout: Maximum wait time
+            client_id: If set, skip requests whose client_id doesn't match.
             
         Returns:
             Request data as dict
@@ -758,12 +758,15 @@ class MakerStreamClient(BaseStreamClient):
                 )
                 
                 if msg_type == "request":
-                    return self._request_to_dict(data)
+                    req = self._request_to_dict(data)
+                    if client_id and req.get("client_id") != client_id:
+                        logger.debug(f"Skipping request with client_id={req.get('client_id')} (waiting for {client_id})")
+                        continue
+                    return req
                 
                 if msg_type == "error":
                     raise IndexerValidationError(f"{data.code}: {data.message}")
                 
-                # Put back other messages
                 await self._message_queue.put((msg_type, data))
                 await asyncio.sleep(0.01)
                 
@@ -794,33 +797,27 @@ class MakerStreamClient(BaseStreamClient):
                 elif msg_type == "error":
                     logger.error(f"Stream error: {data.code}: {data.message}")
                 else:
-                    # Put back other messages
                     await self._message_queue.put((msg_type, data))
                     
             except asyncio.TimeoutError:
                 continue
     
-    def _request_to_dict(self, request: RFQRequestType) -> dict:
+    def _request_to_dict(self, request) -> dict:
         """Convert request protobuf to dict."""
         return {
-            "rfq_id": str(request.rfq_id),
             "client_id": request.client_id,
+            "rfq_id": str(request.rfq_id),
             "market_id": request.market_id,
             "direction": request.direction,
             "margin": request.margin,
             "quantity": request.quantity,
             "worst_price": request.worst_price,
             "request_address": request.request_address,
-            "taker": request.request_address,  # Alias for compatibility
+            "taker": request.request_address,
             "expiry": request.expiry,
             "status": request.status,
         }
 
 
-# ============================================================
-# Backwards Compatibility Alias
-# ============================================================
-
-# For gradual migration, keep WebSocketClient as an alias
-# Tests and actors can use TakerStreamClient or MakerStreamClient directly
+# Backwards compatibility alias
 WebSocketClient = TakerStreamClient
