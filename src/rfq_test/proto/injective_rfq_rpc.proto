@@ -57,10 +57,8 @@ message RFQRequestInputType {
 	string request_address = 7;
 	// Expiry timestamp in milliseconds
 	uint64 expiry = 8;
-	// Status (open, cancelled, completed)
-	string status = 9;
 	// Transaction time timestamp
-	uint64 transaction_time = 10;
+	uint64 transaction_time = 9;
 }
 
 message RequestResponse {
