@@ -10,7 +10,7 @@ Field layouts match the injective-indexer proto (injective_rfq_rpc package):
 - QuoteStreamAck: field 1 = rfq_id, field 2 = status
 """
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Optional
 
 from google.protobuf.internal.encoder import _VarintBytes
@@ -72,6 +72,11 @@ def _decode_expiry_submessage(data: bytes) -> int:
         elif field_num == 2 and timestamp == 0:
             timestamp = value
     return timestamp
+
+
+def _decode_expiry_type(data: bytes) -> "RFQExpiryType":
+    """Decode RFQExpiryType sub-message preserving both timestamp and height."""
+    return RFQExpiryType.decode(data)
 
 
 def _decode_zigzag(value: int) -> int:
@@ -364,7 +369,7 @@ class RFQProcessedQuoteType:
     margin: str = ""
     quantity: str = ""
     price: str = ""
-    expiry: int = 0
+    expiry: RFQExpiryType = field(default_factory=RFQExpiryType)
     maker: str = ""
     taker: str = ""
     signature: str = ""
@@ -406,7 +411,7 @@ class RFQProcessedQuoteType:
                 value_bytes = data[pos:pos + length]
                 pos += length
                 if field_num == 9:
-                    result.expiry = _decode_expiry_submessage(value_bytes)
+                    result.expiry = _decode_expiry_type(value_bytes)
                     continue
 
                 value = value_bytes.decode("utf-8")
@@ -443,6 +448,71 @@ class RFQProcessedQuoteType:
 
 
 @dataclass
+class RFQSettlementLimitActionType:
+    """Limit order action for unfilled settlement quantity."""
+
+    price: str = ""
+
+    @classmethod
+    def decode(cls, data: bytes) -> "RFQSettlementLimitActionType":
+        result = cls()
+        pos = 0
+        while pos < len(data):
+            tag_wire, new_pos = _DecodeVarint32(data, pos)
+            field_num = tag_wire >> 3
+            wire_type = tag_wire & 0x7
+            pos = new_pos
+
+            if wire_type == 2:
+                length, pos = _DecodeVarint32(data, pos)
+                value = data[pos:pos + length].decode("utf-8")
+                pos += length
+                if field_num == 1:
+                    result.price = value
+
+        return result
+
+
+@dataclass
+class RFQSettlementMarketActionType:
+    """Market order action for unfilled settlement quantity."""
+
+    @classmethod
+    def decode(cls, _data: bytes) -> "RFQSettlementMarketActionType":
+        return cls()
+
+
+@dataclass
+class RFQSettlementUnfilledActionType:
+    """Action to take for unfilled settlement quantity."""
+
+    limit: Optional[RFQSettlementLimitActionType] = None
+    market: Optional[RFQSettlementMarketActionType] = None
+
+    @classmethod
+    def decode(cls, data: bytes) -> "RFQSettlementUnfilledActionType":
+        result = cls()
+        pos = 0
+        while pos < len(data):
+            tag_wire, new_pos = _DecodeVarint32(data, pos)
+            field_num = tag_wire >> 3
+            wire_type = tag_wire & 0x7
+            pos = new_pos
+
+            if wire_type == 2:
+                length, pos = _DecodeVarint32(data, pos)
+                value_bytes = data[pos:pos + length]
+                pos += length
+
+                if field_num == 1:
+                    result.limit = RFQSettlementLimitActionType.decode(value_bytes)
+                elif field_num == 2:
+                    result.market = RFQSettlementMarketActionType.decode(value_bytes)
+
+        return result
+
+
+@dataclass
 class RFQSettlementType:
     """Settlement update streamed back to makers."""
 
@@ -453,6 +523,7 @@ class RFQSettlementType:
     margin: str = ""
     quantity: str = ""
     worst_price: str = ""
+    unfilled_action: Optional[RFQSettlementUnfilledActionType] = None
     fallback_quantity: str = ""
     fallback_margin: str = ""
     transaction_time: int = 0
@@ -491,9 +562,8 @@ class RFQSettlementType:
                 value_bytes = data[pos:pos + length]
                 pos += length
 
-                # Field 8 is a nested unfilled_action message. The example only
-                # needs the RFQ-level settlement metadata, so we skip decoding it.
                 if field_num == 8:
+                    result.unfilled_action = RFQSettlementUnfilledActionType.decode(value_bytes)
                     continue
 
                 value = value_bytes.decode("utf-8")
