@@ -114,6 +114,10 @@ class BaseStreamClient(ABC):
     def url(self) -> str:
         """Full WebSocket URL."""
         return f"{self.base_url}{self.stream_path}"
+
+    def _additional_headers(self) -> Optional[dict[str, str]]:
+        """Optional WebSocket handshake headers for stream metadata."""
+        return None
     
     async def connect(self) -> None:
         """Connect to the WebSocket stream."""
@@ -129,6 +133,7 @@ class BaseStreamClient(ABC):
                     self.url,
                     subprotocols=[GRPC_WS_SUBPROTOCOL],
                     ssl=ssl_context,
+                    additional_headers=self._additional_headers(),
                 ),
                 timeout=self.timeout,
             )
@@ -283,37 +288,11 @@ class TakerStreamClient(BaseStreamClient):
     def stream_path(self) -> str:
         return "/TakerStream"
 
-    async def connect(self) -> None:
-        """Connect to TakerStream; send request_address as metadata if set."""
-        try:
-            logger.info(f"Connecting to {self.url}")
-            ssl_context = None
-            if self.url.startswith("wss://"):
-                ssl_context = ssl.create_default_context(cafile=certifi.where())
-            additional_headers: dict[str, str] = {}
-            if self._request_address:
-                additional_headers["request_address"] = self._request_address
-            self._ws = await asyncio.wait_for(
-                websockets.connect(
-                    self.url,
-                    subprotocols=[GRPC_WS_SUBPROTOCOL],
-                    ssl=ssl_context,
-                    additional_headers=additional_headers or None,
-                ),
-                timeout=self.timeout,
-            )
-            self._connected = True
-            self._receive_task = asyncio.create_task(self._receive_loop())
-            self._ping_task = asyncio.create_task(self._ping_loop())
-            try:
-                await self._send_ping()
-            except Exception as e:
-                logger.warning(f"Initial ping failed: {e}")
-            logger.info(f"Connected to {self.url}")
-        except asyncio.TimeoutError as e:
-            raise IndexerConnectionError(f"Connection timeout: {self.url}") from e
-        except Exception as e:
-            raise IndexerConnectionError(f"Failed to connect: {e}") from e
+    def _additional_headers(self) -> Optional[dict[str, str]]:
+        """gRPC-web metadata required to identify the taker stream."""
+        if not self._request_address:
+            return None
+        return {"request_address": self._request_address}
 
     async def _send_ping(self) -> None:
         """Send ping to keep connection alive."""
@@ -594,10 +573,43 @@ class MakerStreamClient(BaseStreamClient):
             async for request in client.requests(timeout=60):
                 await client.send_quote(quote_data)
     """
+
+    def __init__(
+        self,
+        base_url: str,
+        maker_address: Optional[str] = None,
+        subscribe_to_quotes_updates: bool = False,
+        subscribe_to_settlement_updates: bool = False,
+        timeout: float = 10.0,
+    ):
+        """Initialize Maker stream client.
+
+        Args:
+            base_url: WebSocket base URL (without /MakerStream)
+            maker_address: Maker's Injective address sent as stream metadata
+            subscribe_to_quotes_updates: Request quote update events for this maker
+            subscribe_to_settlement_updates: Request settlement update events for this maker
+            timeout: Default timeout for operations
+        """
+        super().__init__(base_url, timeout=timeout)
+        self._maker_address = maker_address
+        self._subscribe_to_quotes_updates = subscribe_to_quotes_updates
+        self._subscribe_to_settlement_updates = subscribe_to_settlement_updates
     
     @property
     def stream_path(self) -> str:
         return "/MakerStream"
+
+    def _additional_headers(self) -> Optional[dict[str, str]]:
+        """gRPC-web metadata supported by the maker stream handshake."""
+        headers: dict[str, str] = {}
+        if self._maker_address:
+            headers["maker_address"] = self._maker_address
+        if self._subscribe_to_quotes_updates:
+            headers["subscribe_to_quotes_updates"] = "true"
+        if self._subscribe_to_settlement_updates:
+            headers["subscribe_to_settlement_updates"] = "true"
+        return headers or None
     
     async def _send_ping(self) -> None:
         """Send ping to keep connection alive."""

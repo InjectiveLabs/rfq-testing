@@ -135,7 +135,11 @@ async def main():
     print("\n📡 PHASE 1: WebSocket Round-Trip")
     print("-" * 40)
 
-    mm_client = MakerStreamClient(config.indexer.ws_endpoint, timeout=10.0)
+    mm_client = MakerStreamClient(
+        config.indexer.ws_endpoint,
+        maker_address=mm_wallet.inj_address,
+        timeout=10.0,
+    )
     await mm_client.connect()
     print("   ✅ MM connected to MakerStream")
 

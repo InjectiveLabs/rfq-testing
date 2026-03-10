@@ -49,7 +49,11 @@ async def main():
     print(f"📜 Contract: {contract_address}\n")
 
     # Step 1: Connect MM to MakerStream
-    mm_client = MakerStreamClient(config.indexer.ws_endpoint, timeout=10.0)
+    mm_client = MakerStreamClient(
+        config.indexer.ws_endpoint,
+        maker_address=mm_wallet.inj_address,
+        timeout=10.0,
+    )
     await mm_client.connect()
     print("✅ MM connected to MakerStream")
 
