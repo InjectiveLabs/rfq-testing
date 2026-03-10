@@ -522,6 +522,7 @@ class ContractClient:
         quantity: Decimal,
         worst_price: Optional[Decimal] = None,
         unfilled_action: Optional[dict] = None,
+        cid: Optional[str] = None,
     ) -> str:
         """Accept quote(s) and settle trade.
         
@@ -538,6 +539,7 @@ class ContractClient:
                 - None: No fallback, only fill via RFQ quotes
                 - {"limit": {"price": "4.5"}}: Place limit order for unfilled at specified price
                 - {"market": {}}: Place market order (IOC) for unfilled at worst_price
+            cid: Optional settlement CID attached to any orderbook execution created by AcceptQuote
             
         Returns:
             Transaction hash
@@ -578,7 +580,9 @@ class ContractClient:
         # Add unfilled_action (contract expects Option<PostUnfilledAction>)
         # Can be: None, {"limit": {"price": "X"}}, or {"market": {}}
         accept_msg["unfilled_action"] = unfilled_action
-        
+        if cid:
+            accept_msg["cid"] = cid
+
         accept_msg["quotes"] = [_normalize_contract_quote(quote) for quote in quotes]
         
         msg = {

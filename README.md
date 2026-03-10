@@ -98,6 +98,38 @@ The RFQ Indexer uses **gRPC-web over WebSocket** with protobuf framing:
 - **Keep-alive:** Send `ping` message every 1 second
 - **Signing:** `keccak256(canonical_json) → secp256k1_sign` (raw hash, NO EIP-191 prefix)
 
+### Maker Update Subscriptions
+
+When a maker connects to `MakerStream`, it can set these WebSocket headers:
+
+- `maker_address`: maker's Injective bech32 address
+- `subscribe_to_quotes_updates: true`
+- `subscribe_to_settlement_updates: true`
+
+These subscriptions are maker-scoped:
+
+- **Quote updates:** the maker receives `quote_update` events for quotes whose `maker` matches `maker_address`.
+- **Settlement updates:** the maker receives `settlement_update` events when a settlement includes at least one quote from `maker_address`, even if that quote was not the one used for execution.
+
+For quote updates:
+
+- `status="accepted"` means that quote was used in settlement.
+- `status="rejected"` means the quote was included in evaluation but not used.
+- `executed_quantity` and `executed_margin` contain the actually executed portion for that quote.
+
+Python client example:
+
+```python
+from rfq_test.clients.websocket import MakerStreamClient
+
+mm_client = MakerStreamClient(
+    ws_url,
+    maker_address=maker_inj_address,
+    subscribe_to_quotes_updates=True,
+    subscribe_to_settlement_updates=True,
+)
+```
+
 ### Supported Markets (Testnet)
 
 | Symbol | Market ID |

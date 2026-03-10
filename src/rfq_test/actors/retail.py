@@ -166,6 +166,7 @@ class RetailUser:
         quantity: Decimal,
         worst_price: Optional[Decimal] = None,
         unfilled_action: Optional[dict] = None,
+        cid: Optional[str] = None,
     ) -> str:
         """Accept a quote and settle the trade on-chain.
         
@@ -184,6 +185,7 @@ class RetailUser:
             worst_price: Max price (long) or min price (short). Required by contract; default from quote price.
             unfilled_action: When quote fills only part of quantity, contract posts remainder to orderbook:
                 {"limit": {"price": "X"}} or {"market": {}}
+            cid: Optional settlement CID for any orderbook execution created by AcceptQuote
             
         Returns:
             Transaction hash
@@ -208,6 +210,7 @@ class RetailUser:
             quantity=quantity,
             worst_price=worst_price,
             unfilled_action=unfilled_action,
+            cid=cid,
         )
     
     async def settle_via_orderbook(
@@ -219,6 +222,7 @@ class RetailUser:
         quantity: Decimal,
         worst_price: Decimal,
         unfilled_action: Optional[dict] = None,
+        cid: Optional[str] = None,
     ) -> str:
         """Settle trade via orderbook (no MM quotes).
         
@@ -233,6 +237,7 @@ class RetailUser:
             quantity: Trade quantity
             worst_price: Max (long) or min (short) price for the orderbook order
             unfilled_action: Required when quotes=[]; use {"market": {}} or {"limit": {"price": "X"}}
+            cid: Optional settlement CID for the fallback orderbook execution
             
         Returns:
             Transaction hash
@@ -250,4 +255,5 @@ class RetailUser:
             quantity=quantity,
             worst_price=worst_price,
             unfilled_action=unfilled_action,
+            cid=cid,
         )

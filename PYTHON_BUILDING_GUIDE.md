@@ -256,6 +256,10 @@ Append `/TakerStream` or `/MakerStream` to the base URL.
 - **Connection metadata:** Send `maker_address` as a header when connecting if you want maker-scoped updates.
 - **Optional subscriptions:** Set `subscribe_to_quotes_updates: true` and `subscribe_to_settlement_updates: true` as headers to receive those maker stream updates.
 - **Receive:** Requests arrive as stream messages
+- **Quote update scope:** `quote_update` events are sent for quotes whose `maker` matches `maker_address`.
+- **Settlement update scope:** `settlement_update` events are sent when a settlement includes at least one quote from `maker_address`, whether that specific quote was executed or not.
+- **Quote status meaning:** In `quote_update`, `status="accepted"` means the quote was used; `status="rejected"` means it was considered but not used.
+- **Executed fields:** In `quote_update`, `executed_quantity` and `executed_margin` are the actually filled amount and margin for that quote.
 - **Send:** Quotes as `RFQQuoteType` with fields: `chain_id`, `contract_address`, `market_id`, `rfq_id`, `taker_direction`, `margin`, `quantity`, `price`, `expiry`, `maker`, `taker`, `signature`
 
 ### Proto Field Order (Quote)

@@ -69,15 +69,18 @@ async def test_accept_quote_normalizes_expiry_and_signature_for_contract():
             quantity="1",
             worst_price="3.0",
             unfilled_action={"market": {}},
+            cid="tc-cli-123",
         )
 
     assert tx_hash == "ABC123"
     assert FakeComposer.last_msg is not None
 
     payload = json.loads(FakeComposer.last_msg["msg"])
-    quote = payload["accept_quote"]["quotes"][0]
+    accept_quote = payload["accept_quote"]
+    quote = accept_quote["quotes"][0]
 
-    assert payload["accept_quote"]["rfq_id"] == 1772850886884
+    assert accept_quote["rfq_id"] == 1772850886884
+    assert accept_quote["cid"] == "tc-cli-123"
     assert quote["expiry"] == {"ts": 1772851186901}
     assert quote["signature"] != "0x" + "ab" * 65
     assert quote["signature"].endswith("=")

@@ -134,10 +134,21 @@ async def mm_wait_for_post_settlement_updates(mm_client, target_rfq_id, timeout=
 
         if event_type == "quote_update":
             quote_update = data
-            print(
-                f"   ✅ Quote update received: status={data.status} "
-                f"executed_qty={data.executed_quantity or data.quantity}"
-            )
+            status = (data.status or "").lower()
+            if status == "accepted":
+                print(
+                    "   ✅ Quote update received: "
+                    f"status={data.status} "
+                    f"executed_qty={data.executed_quantity or data.quantity} "
+                    f"executed_margin={data.executed_margin or data.margin}"
+                )
+            else:
+                print(
+                    "   ✅ Quote update received: "
+                    f"status={data.status} "
+                    f"qty={data.quantity} "
+                    f"margin={data.margin}"
+                )
         elif event_type == "settlement_update":
             settlement_update = data
             print(
@@ -301,6 +312,8 @@ async def main():
     print(f"      Margin:    {margin}, Qty: {quantity}")
     print(f"      Price:     {best_quote['price']}")
     print(f"      Maker:     {best_quote['maker']}")
+    settlement_cid = f"tc-cli-{uuid.uuid4()}"
+    print(f"      CID:       {settlement_cid}")
 
     try:
         tx_hash = await contract_client.accept_quote(
@@ -313,6 +326,7 @@ async def main():
             quantity=Decimal(quantity),
             worst_price=worst_price,
             unfilled_action={"market": {}},
+            cid=settlement_cid,
         )
         print(f"\n   🎉 SETTLEMENT SUCCESSFUL!")
         print(f"   📜 TX Hash: {tx_hash}")
@@ -325,6 +339,11 @@ async def main():
         )
         print(f"   📬 Final quote status: {quote_update.status}")
         print(f"   📬 Settlement CID: {settlement_update.cid}")
+        if settlement_update.cid != settlement_cid:
+            print(
+                f"   ⚠️  Settlement CID mismatch: expected {settlement_cid}, "
+                f"got {settlement_update.cid}"
+            )
     except Exception as e:
         print(f"\n   ❌ SETTLEMENT FAILED: {e}")
         logger.exception("Settlement error:")
