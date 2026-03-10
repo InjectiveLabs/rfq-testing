@@ -74,6 +74,11 @@ def _decode_expiry_submessage(data: bytes) -> int:
     return timestamp
 
 
+def _decode_zigzag(value: int) -> int:
+    """Decode protobuf zigzag-encoded sint64."""
+    return (value >> 1) ^ -(value & 1)
+
+
 # ============================================================
 # Core Types
 # ============================================================
@@ -254,9 +259,9 @@ class RFQQuoteType:
                 else:
                     value, pos = _DecodeVarint32(data, pos)
                     if field_num == 14:
-                        result.created_at = (value >> 1) ^ -(value & 1)
+                        result.created_at = _decode_zigzag(value)
                     elif field_num == 15:
-                        result.updated_at = (value >> 1) ^ -(value & 1)
+                        result.updated_at = _decode_zigzag(value)
             elif wire_type == 2:  # Length-delimited
                 length, pos = _DecodeVarint32(data, pos)
                 value_bytes = data[pos:pos + length]
@@ -289,6 +294,175 @@ class RFQQuoteType:
                         result.status = value
 
         return result
+
+
+@dataclass
+class RFQProcessedQuoteType:
+    """Processed RFQ quote update streamed back to makers."""
+
+    error: str = ""
+    executed_quantity: str = ""
+    executed_margin: str = ""
+    market_id: str = ""
+    rfq_id: int = 0
+    taker_direction: str = ""
+    margin: str = ""
+    quantity: str = ""
+    price: str = ""
+    expiry: int = 0
+    maker: str = ""
+    taker: str = ""
+    signature: str = ""
+    status: str = ""
+    created_at: int = 0
+    updated_at: int = 0
+    height: int = 0
+    event_time: int = 0
+    transaction_time: int = 0
+    chain_id: str = ""
+    contract_address: str = ""
+
+    @classmethod
+    def decode(cls, data: bytes) -> "RFQProcessedQuoteType":
+        result = cls()
+        pos = 0
+        while pos < len(data):
+            tag_wire, new_pos = _DecodeVarint32(data, pos)
+            field_num = tag_wire >> 3
+            wire_type = tag_wire & 0x7
+            pos = new_pos
+
+            if wire_type == 0:
+                value, pos = _DecodeVarint(data, pos)
+                if field_num == 4:
+                    result.rfq_id = value
+                elif field_num == 14:
+                    result.created_at = _decode_zigzag(value)
+                elif field_num == 15:
+                    result.updated_at = _decode_zigzag(value)
+                elif field_num == 16:
+                    result.height = value
+                elif field_num == 17:
+                    result.event_time = value
+                elif field_num == 18:
+                    result.transaction_time = value
+            elif wire_type == 2:
+                length, pos = _DecodeVarint32(data, pos)
+                value_bytes = data[pos:pos + length]
+                pos += length
+                if field_num == 9:
+                    result.expiry = _decode_expiry_submessage(value_bytes)
+                    continue
+
+                value = value_bytes.decode("utf-8")
+                if field_num == 1:
+                    result.chain_id = value
+                elif field_num == 2:
+                    result.contract_address = value
+                elif field_num == 3:
+                    result.market_id = value
+                elif field_num == 5:
+                    result.taker_direction = value
+                elif field_num == 6:
+                    result.margin = value
+                elif field_num == 7:
+                    result.quantity = value
+                elif field_num == 8:
+                    result.price = value
+                elif field_num == 10:
+                    result.maker = value
+                elif field_num == 11:
+                    result.taker = value
+                elif field_num == 12:
+                    result.signature = value
+                elif field_num == 13:
+                    result.status = value
+                elif field_num == 50:
+                    result.error = value
+                elif field_num == 51:
+                    result.executed_quantity = value
+                elif field_num == 52:
+                    result.executed_margin = value
+
+        return result
+
+
+@dataclass
+class RFQSettlementType:
+    """Settlement update streamed back to makers."""
+
+    rfq_id: int = 0
+    market_id: str = ""
+    taker: str = ""
+    direction: str = ""
+    margin: str = ""
+    quantity: str = ""
+    worst_price: str = ""
+    fallback_quantity: str = ""
+    fallback_margin: str = ""
+    transaction_time: int = 0
+    created_at: int = 0
+    updated_at: int = 0
+    event_time: int = 0
+    height: int = 0
+    cid: str = ""
+
+    @classmethod
+    def decode(cls, data: bytes) -> "RFQSettlementType":
+        result = cls()
+        pos = 0
+        while pos < len(data):
+            tag_wire, new_pos = _DecodeVarint32(data, pos)
+            field_num = tag_wire >> 3
+            wire_type = tag_wire & 0x7
+            pos = new_pos
+
+            if wire_type == 0:
+                value, pos = _DecodeVarint(data, pos)
+                if field_num == 1:
+                    result.rfq_id = value
+                elif field_num == 11:
+                    result.transaction_time = value
+                elif field_num == 12:
+                    result.created_at = _decode_zigzag(value)
+                elif field_num == 13:
+                    result.updated_at = _decode_zigzag(value)
+                elif field_num == 14:
+                    result.event_time = value
+                elif field_num == 15:
+                    result.height = value
+            elif wire_type == 2:
+                length, pos = _DecodeVarint32(data, pos)
+                value_bytes = data[pos:pos + length]
+                pos += length
+
+                # Field 8 is a nested unfilled_action message. The example only
+                # needs the RFQ-level settlement metadata, so we skip decoding it.
+                if field_num == 8:
+                    continue
+
+                value = value_bytes.decode("utf-8")
+                if field_num == 2:
+                    result.market_id = value
+                elif field_num == 3:
+                    result.taker = value
+                elif field_num == 4:
+                    result.direction = value
+                elif field_num == 5:
+                    result.margin = value
+                elif field_num == 6:
+                    result.quantity = value
+                elif field_num == 7:
+                    result.worst_price = value
+                elif field_num == 9:
+                    result.fallback_quantity = value
+                elif field_num == 10:
+                    result.fallback_margin = value
+                elif field_num == 16:
+                    result.cid = value
+
+        return result
+
 
 
 @dataclass
@@ -474,12 +648,15 @@ class MakerStreamRequest:
 class MakerStreamResponse:
     """Message received by maker from server.
     
-    Fields: 1=message_type, 2=request, 3=quote_ack, 4=error.
+    Fields: 1=message_type, 2=request, 3=quote_ack, 4=error,
+    5=processed_quote, 6=settlement.
     """
     message_type: str = ""  # "pong" | "request" | "quote_ack" | "error"
     request: Optional[RFQRequestType] = None
     quote_ack: Optional[QuoteStreamAck] = None
     error: Optional[StreamError] = None
+    processed_quote: Optional[RFQProcessedQuoteType] = None
+    settlement: Optional[RFQSettlementType] = None
 
     @classmethod
     def decode(cls, data: bytes) -> "MakerStreamResponse":
@@ -506,5 +683,9 @@ class MakerStreamResponse:
                     result.quote_ack = QuoteStreamAck.decode(value_bytes)
                 elif field_num == 4:
                     result.error = StreamError.decode(value_bytes)
+                elif field_num == 5:
+                    result.processed_quote = RFQProcessedQuoteType.decode(value_bytes)
+                elif field_num == 6:
+                    result.settlement = RFQSettlementType.decode(value_bytes)
 
         return result

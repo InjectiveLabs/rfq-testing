@@ -25,7 +25,9 @@ from rfq_test.proto.rfq_messages import (
     CreateRFQRequestType,
     MakerStreamRequest,
     MakerStreamResponse,
+    RFQProcessedQuoteType,
     RFQQuoteType,
+    RFQSettlementType,
     TakerStreamRequest,
     TakerStreamResponse,
 )
@@ -644,6 +646,26 @@ class MakerStreamClient(BaseStreamClient):
                     ack = response.quote_ack
                     logger.debug(f"Quote ACK: RFQ#{ack.rfq_id} status={ack.status}")
                     await self._message_queue.put(("quote_ack", ack))
+
+                elif msg_type == "quote_update":
+                    quote = response.processed_quote
+                    logger.info(
+                        "Received quote update: RFQ#%s status=%s maker=%s",
+                        quote.rfq_id,
+                        quote.status,
+                        quote.maker,
+                    )
+                    await self._message_queue.put(("quote_update", quote))
+
+                elif msg_type == "settlement_update":
+                    settlement = response.settlement
+                    logger.info(
+                        "Received settlement update: RFQ#%s taker=%s cid=%s",
+                        settlement.rfq_id,
+                        settlement.taker,
+                        settlement.cid,
+                    )
+                    await self._message_queue.put(("settlement_update", settlement))
                 
                 elif msg_type == "error":
                     err = response.error
@@ -813,6 +835,59 @@ class MakerStreamClient(BaseStreamClient):
                     
             except asyncio.TimeoutError:
                 continue
+
+    async def get_next_event(self, timeout: float = 1.0) -> Optional[tuple]:
+        """Get the next maker stream event. Returns None on timeout."""
+        try:
+            return await asyncio.wait_for(self._message_queue.get(), timeout=timeout)
+        except asyncio.TimeoutError:
+            return None
+
+    async def wait_for_quote_update(self, rfq_id: int, timeout: float = 30.0) -> dict:
+        """Wait for a processed quote update for a specific RFQ."""
+        start = time.monotonic()
+        while (time.monotonic() - start) < timeout:
+            try:
+                msg_type, data = await asyncio.wait_for(
+                    self._message_queue.get(),
+                    timeout=timeout - (time.monotonic() - start),
+                )
+
+                if msg_type == "quote_update" and data.rfq_id == rfq_id:
+                    return self._processed_quote_to_dict(data)
+
+                if msg_type == "error":
+                    raise IndexerValidationError(f"{data.code}: {data.message}")
+
+                await self._message_queue.put((msg_type, data))
+                await asyncio.sleep(0.01)
+            except asyncio.TimeoutError:
+                break
+
+        raise IndexerTimeoutError(f"No quote update for request {rfq_id} within {timeout}s")
+
+    async def wait_for_settlement_update(self, rfq_id: int, timeout: float = 30.0) -> dict:
+        """Wait for a settlement update for a specific RFQ."""
+        start = time.monotonic()
+        while (time.monotonic() - start) < timeout:
+            try:
+                msg_type, data = await asyncio.wait_for(
+                    self._message_queue.get(),
+                    timeout=timeout - (time.monotonic() - start),
+                )
+
+                if msg_type == "settlement_update" and data.rfq_id == rfq_id:
+                    return self._settlement_to_dict(data)
+
+                if msg_type == "error":
+                    raise IndexerValidationError(f"{data.code}: {data.message}")
+
+                await self._message_queue.put((msg_type, data))
+                await asyncio.sleep(0.01)
+            except asyncio.TimeoutError:
+                break
+
+        raise IndexerTimeoutError(f"No settlement update for request {rfq_id} within {timeout}s")
     
     def _request_to_dict(self, request) -> dict:
         """Convert request protobuf to dict."""
@@ -828,6 +903,45 @@ class MakerStreamClient(BaseStreamClient):
             "taker": request.request_address,
             "expiry": request.expiry,
             "status": request.status,
+        }
+
+    def _processed_quote_to_dict(self, quote: RFQProcessedQuoteType) -> dict:
+        """Convert processed quote protobuf to dict."""
+        return {
+            "rfq_id": str(quote.rfq_id),
+            "market_id": quote.market_id,
+            "taker_direction": quote.taker_direction,
+            "margin": quote.margin,
+            "quantity": quote.quantity,
+            "price": quote.price,
+            "expiry": quote.expiry,
+            "maker": quote.maker,
+            "taker": quote.taker,
+            "signature": quote.signature,
+            "status": quote.status,
+            "error": quote.error,
+            "executed_quantity": quote.executed_quantity,
+            "executed_margin": quote.executed_margin,
+            "event_time": quote.event_time,
+            "transaction_time": quote.transaction_time,
+        }
+
+    def _settlement_to_dict(self, settlement: RFQSettlementType) -> dict:
+        """Convert settlement protobuf to dict."""
+        return {
+            "rfq_id": str(settlement.rfq_id),
+            "market_id": settlement.market_id,
+            "taker": settlement.taker,
+            "direction": settlement.direction,
+            "margin": settlement.margin,
+            "quantity": settlement.quantity,
+            "worst_price": settlement.worst_price,
+            "fallback_quantity": settlement.fallback_quantity,
+            "fallback_margin": settlement.fallback_margin,
+            "cid": settlement.cid,
+            "event_time": settlement.event_time,
+            "transaction_time": settlement.transaction_time,
+            "height": settlement.height,
         }
 
 

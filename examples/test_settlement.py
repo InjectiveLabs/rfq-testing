@@ -105,6 +105,47 @@ async def mm_wait_and_quote(mm_client, mm_wallet, chain_id, contract_address, ta
     return quote_data
 
 
+async def mm_wait_for_post_settlement_updates(mm_client, target_rfq_id, timeout=60.0):
+    """Wait for quote_update and settlement_update for the target RFQ."""
+    print(f"   ⏳ MM waiting for quote_update + settlement_update for RFQ#{target_rfq_id}...")
+    start = time.monotonic()
+    quote_update = None
+    settlement_update = None
+
+    while (time.monotonic() - start) < timeout:
+        event = await mm_client.get_next_event(timeout=2.0)
+        if event is None:
+            continue
+
+        event_type, data = event
+        event_rfq_id = getattr(data, "rfq_id", None)
+        if event_rfq_id != target_rfq_id:
+            logger.info(f"Skipping maker stream event {event_type} for RFQ#{event_rfq_id}")
+            continue
+
+        if event_type == "quote_update":
+            quote_update = data
+            print(
+                f"   ✅ Quote update received: status={data.status} "
+                f"executed_qty={data.executed_quantity or data.quantity}"
+            )
+        elif event_type == "settlement_update":
+            settlement_update = data
+            print(
+                f"   ✅ Settlement update received: cid={data.cid} "
+                f"height={data.height}"
+            )
+        elif event_type == "error":
+            raise RuntimeError(f"Maker stream error: {data.code}: {data.message}")
+
+        if quote_update and settlement_update:
+            return quote_update, settlement_update
+
+    raise TimeoutError(
+        f"Timed out waiting for quote_update and settlement_update for RFQ#{target_rfq_id}"
+    )
+
+
 async def main():
     os.environ.setdefault("RFQ_ENV", "testnet")
     config = get_environment_config()
@@ -138,10 +179,12 @@ async def main():
     mm_client = MakerStreamClient(
         config.indexer.ws_endpoint,
         maker_address=mm_wallet.inj_address,
+        subscribe_to_quotes_updates=True,
+        subscribe_to_settlement_updates=True,
         timeout=10.0,
     )
     await mm_client.connect()
-    print("   ✅ MM connected to MakerStream")
+    print("   ✅ MM connected to MakerStream (quote + settlement updates subscribed)")
 
     retail_client = TakerStreamClient(
         config.indexer.ws_endpoint,
@@ -183,20 +226,23 @@ async def main():
 
     sent_quote = await mm_task
 
-    if not quotes:
+    if not quotes or not sent_quote:
         print("   ❌ No quotes received. Aborting.")
         await mm_client.close()
         await retail_client.close()
         return
 
-    best_quote = quotes[0]
-    print(f"\n   ✅ Retail got {len(quotes)} quote(s)")
+    matching_quotes = [quote for quote in quotes if quote["maker"] == mm_wallet.inj_address]
+    if not matching_quotes:
+        print(f"   ❌ Retail got {len(quotes)} quote(s), but none from MM {mm_wallet.inj_address}")
+        await mm_client.close()
+        await retail_client.close()
+        return
+
+    best_quote = matching_quotes[0]
+    print(f"\n   ✅ Retail got {len(quotes)} quote(s), using MM quote")
     print(f"      Price: {best_quote['price']}")
     print(f"      Maker: {best_quote['maker']}")
-
-    await mm_client.close()
-    await retail_client.close()
-    print("   📡 WS closed")
 
     # ─── PHASE 2: On-Chain Settlement ───
     print("\n⛓️  PHASE 2: On-Chain Settlement")
@@ -235,9 +281,21 @@ async def main():
         print(f"\n   🎉 SETTLEMENT SUCCESSFUL!")
         print(f"   📜 TX Hash: {tx_hash}")
         print(f"   🔗 https://testnet.explorer.injective.network/transaction/{tx_hash}")
+
+        quote_update, settlement_update = await mm_wait_for_post_settlement_updates(
+            mm_client,
+            rfq_id,
+            timeout=60.0,
+        )
+        print(f"   📬 Final quote status: {quote_update.status}")
+        print(f"   📬 Settlement CID: {settlement_update.cid}")
     except Exception as e:
         print(f"\n   ❌ SETTLEMENT FAILED: {e}")
         logger.exception("Settlement error:")
+    finally:
+        await mm_client.close()
+        await retail_client.close()
+        print("   📡 WS closed")
 
     print("\n" + "=" * 60)
     print("TEST COMPLETE")
