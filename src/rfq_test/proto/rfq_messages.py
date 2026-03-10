@@ -79,9 +79,61 @@ def _decode_zigzag(value: int) -> int:
     return (value >> 1) ^ -(value & 1)
 
 
+def _encode_expiry_submessage(expiry: int | dict | "RFQExpiryType") -> bytes:
+    """Encode RFQExpiryType with either timestamp or height."""
+    timestamp = 0
+    height = 0
+
+    if isinstance(expiry, RFQExpiryType):
+        timestamp = expiry.timestamp
+        height = expiry.height
+    elif isinstance(expiry, dict):
+        timestamp = int(expiry.get("ts") or expiry.get("timestamp") or 0)
+        height = int(expiry.get("h") or expiry.get("height") or 0)
+    elif expiry:
+        timestamp = int(expiry)
+
+    result = b""
+    result += _encode_uint64(1, timestamp)
+    result += _encode_uint64(2, height)
+    return result
+
+
 # ============================================================
 # Core Types
 # ============================================================
+
+
+@dataclass
+class RFQExpiryType:
+    """Expiry represented by timestamp or block height."""
+
+    timestamp: int = 0
+    height: int = 0
+
+    def encode(self) -> bytes:
+        return _encode_expiry_submessage(self)
+
+    @classmethod
+    def decode(cls, data: bytes) -> "RFQExpiryType":
+        result = cls()
+        pos = 0
+        while pos < len(data):
+            tag_wire, new_pos = _DecodeVarint32(data, pos)
+            field_num = tag_wire >> 3
+            wire_type = tag_wire & 0x7
+            pos = new_pos
+
+            if wire_type != 0:
+                break
+
+            value, pos = _DecodeVarint(data, pos)
+            if field_num == 1:
+                result.timestamp = value
+            elif field_num == 2:
+                result.height = value
+
+        return result
 
 @dataclass
 class CreateRFQRequestType:
@@ -96,7 +148,7 @@ class CreateRFQRequestType:
     margin: str = ""
     quantity: str = ""
     worst_price: str = ""
-    expiry: int = 0
+    expiry: int | dict | RFQExpiryType = 0
 
     def encode(self) -> bytes:
         result = b""
@@ -106,7 +158,8 @@ class CreateRFQRequestType:
         result += _encode_string(4, self.margin)
         result += _encode_string(5, self.quantity)
         result += _encode_string(6, self.worst_price)
-        result += _encode_uint64(7, self.expiry)
+        expiry_inner = _encode_expiry_submessage(self.expiry)
+        result += _encode_message(7, expiry_inner)
         return result
 
 
@@ -178,6 +231,8 @@ class RFQRequestType:
                     result.worst_price = value
                 elif field_num == 8:
                     result.request_address = value
+                elif field_num == 9:
+                    result.expiry = _decode_expiry_submessage(value_bytes)
                 elif field_num == 10:
                     result.status = value
 

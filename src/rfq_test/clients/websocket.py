@@ -367,6 +367,9 @@ class TakerStreamClient(BaseStreamClient):
             direction = str(direction)
         
         client_id = request_data.get("client_id") or str(uuid.uuid4())
+        expiry = request_data.get("expiry")
+        if expiry is None:
+            expiry = {"ts": int(time.time() * 1000) + 300_000}
         request = CreateRFQRequestType(
             client_id=client_id,
             market_id=request_data.get("market_id", ""),
@@ -374,7 +377,7 @@ class TakerStreamClient(BaseStreamClient):
             margin=str(request_data.get("margin", "")),
             quantity=str(request_data.get("quantity", "")),
             worst_price=str(request_data.get("worst_price", "0")),
-            expiry=int(request_data.get("expiry", int(time.time() * 1000) + 300_000)),
+            expiry=expiry,
         )
         msg = TakerStreamRequest(message_type="request", request=request)
         logger.info(f"Sending request: client_id={client_id} {request.direction} qty={request.quantity}")

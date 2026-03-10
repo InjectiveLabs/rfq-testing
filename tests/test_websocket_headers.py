@@ -2,10 +2,16 @@ import asyncio
 from unittest.mock import AsyncMock, patch
 
 import pytest
+from google.protobuf.internal.decoder import _DecodeVarint32
 
 from rfq_test.actors.market_maker import MarketMaker
 from rfq_test.clients.websocket import MakerStreamClient, TakerStreamClient
-from rfq_test.proto.rfq_messages import RFQProcessedQuoteType, RFQQuoteType, RFQSettlementType
+from rfq_test.proto.rfq_messages import (
+    CreateRFQRequestType,
+    RFQProcessedQuoteType,
+    RFQQuoteType,
+    RFQSettlementType,
+)
 
 
 class DummyTask:
@@ -186,3 +192,61 @@ def test_rfq_quote_type_round_trip_decode():
     assert decoded.maker == "inj1maker"
     assert decoded.taker == "inj1taker"
     assert decoded.expiry == 1234567890
+
+
+def test_create_rfq_request_encodes_expiry_as_submessage():
+    request = CreateRFQRequestType(
+        client_id="client-1",
+        market_id="0xmarket",
+        direction="long",
+        margin="10",
+        quantity="1",
+        worst_price="100",
+        expiry={"ts": 1234567890},
+    )
+
+    encoded = request.encode()
+
+    pos = 0
+    expiry_value = None
+    while pos < len(encoded):
+        tag_wire, pos = _DecodeVarint32(encoded, pos)
+        field_num = tag_wire >> 3
+        wire_type = tag_wire & 0x7
+        if wire_type != 2:
+            raise AssertionError(f"Unexpected wire type {wire_type} for request field {field_num}")
+
+        length, pos = _DecodeVarint32(encoded, pos)
+        value = encoded[pos:pos + length]
+        pos += length
+        if field_num == 7:
+            expiry_value = value
+            break
+
+    assert expiry_value is not None
+
+    pos = 0
+    tag_wire, pos = _DecodeVarint32(expiry_value, pos)
+    assert tag_wire >> 3 == 1
+    timestamp, pos = _DecodeVarint32(expiry_value, pos)
+    assert timestamp == 1234567890
+
+
+@pytest.mark.asyncio
+async def test_send_request_accepts_rfq_expiry_dict():
+    client = TakerStreamClient("wss://example.test/injective_rfq_rpc.InjectiveRfqRPC")
+    client._send_raw = AsyncMock()
+
+    await client.send_request(
+        {
+            "client_id": "client-1",
+            "market_id": "0xmarket",
+            "direction": "long",
+            "margin": "10",
+            "quantity": "1",
+            "worst_price": "100",
+            "expiry": {"ts": 1234567890},
+        }
+    )
+
+    client._send_raw.assert_awaited_once()

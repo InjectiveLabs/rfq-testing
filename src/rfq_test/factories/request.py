@@ -68,12 +68,13 @@ class RequestFactory:
         quantity: Optional[Decimal] = None,
         worst_price: Optional[Decimal] = None,
         expiry_ms: Optional[int] = None,
-        rfq_id: Optional[Union[str, int]] = None,
+        client_id: Optional[str] = None,
         **overrides,
     ) -> dict:
         """Create a request in the shape expected by the indexer (TakerStream).
 
-        Uses request_address (not taker) and expiry in milliseconds.
+        Uses request_address (not taker). The backend assigns rfq_id, so this
+        factory emits client_id plus RFQExpiryType-style expiry instead.
         Prefer this for indexer/contract tests and actors.
         """
         market = market or self.default_market
@@ -87,18 +88,18 @@ class RequestFactory:
             _dir = "short"
         elif isinstance(_dir, str):
             _dir = _dir.lower()
-        _rfq_id = rfq_id or int(time.time() * 1000)
+        _client_id = client_id or str(int(time.time() * 1000))
         if expiry_ms is None:
             expiry_ms = int(time.time() * 1000) + 300_000  # 5 min default
         request = {
             "request_address": taker_address,
-            "rfq_id": _rfq_id,
+            "client_id": _client_id,
             "market_id": market.id,
             "direction": _dir,
             "margin": str(margin or market.typical_margin),
             "quantity": str(quantity or market.typical_quantity),
             "worst_price": str(worst_price or (market.price or Decimal("100"))),
-            "expiry": expiry_ms,
+            "expiry": {"ts": expiry_ms},
         }
         request.update(overrides)
         return request

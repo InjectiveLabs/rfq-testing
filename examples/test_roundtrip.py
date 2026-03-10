@@ -6,6 +6,7 @@ import logging
 import os
 import sys
 import time
+import uuid
 from decimal import Decimal
 from pathlib import Path
 
@@ -70,21 +71,32 @@ async def main():
     await asyncio.sleep(2)
 
     # Step 3: Retail sends RFQ request
-    rfq_id = int(time.time() * 1000)
-    expiry_ms = rfq_id + 300_000  # 5 min
+    client_id = str(uuid.uuid4())
+    expiry_ms = int(time.time() * 1000) + 300_000  # 5 min
     request_data = {
         "request_address": retail_wallet.inj_address,
-        "rfq_id": rfq_id,
+        "client_id": client_id,
         "market_id": market.id,
         "direction": "long",
         "margin": "100",
         "quantity": "10",
         "worst_price": "100",
-        "expiry": expiry_ms,
+        "expiry": {"ts": expiry_ms},
     }
-    print(f"\n📤 Retail sending request (RFQ#{rfq_id})...")
-    await retail_client.send_request(request_data)
-    print("   Request sent!")
+    print(f"\n📤 Retail sending request (client_id={client_id})...")
+    request_ack = await retail_client.send_request(
+        request_data,
+        wait_for_response=True,
+        response_timeout=10.0,
+    )
+    if not request_ack or request_ack.get("type") != "ack" or not request_ack.get("rfq_id"):
+        print(f"   ❌ No request ACK received: {request_ack}")
+        await mm_client.close()
+        await retail_client.close()
+        return
+
+    rfq_id = int(request_ack["rfq_id"])
+    print(f"   📬 Request ACK received: RFQ#{rfq_id} status={request_ack['status']}")
 
     # Step 4: MM waits for request
     print("\n⏳ MM waiting for request...")

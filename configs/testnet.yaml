@@ -17,7 +17,7 @@ indexer:
   grpc_web_endpoint: "https://testnet.rfq.grpc.injective.network/injective_rfq_rpc.InjectiveRfqRPC"
 
 contract:
-  address: "inj1t8hyyle68vd0kzsdehxg0sywttrwmt58jzk29q"
+  address: "inj1vtswdey9c70n475q7q75wgmkfdw8xw4rcfeqa4"
 
 # Testnet derivative markets. Mark price: .../injective/exchange/v2/derivative/markets/{id}
 markets:
