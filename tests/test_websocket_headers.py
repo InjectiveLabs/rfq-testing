@@ -10,7 +10,11 @@ from rfq_test.proto.rfq_messages import (
     CreateRFQRequestType,
     RFQProcessedQuoteType,
     RFQQuoteType,
+    RFQSettlementLimitActionType,
     RFQSettlementType,
+    _encode_message,
+    _encode_string,
+    _encode_uint64,
 )
 
 
@@ -250,3 +254,56 @@ async def test_send_request_accepts_rfq_expiry_dict():
     )
 
     client._send_raw.assert_awaited_once()
+
+
+def test_processed_quote_decode_preserves_expiry_timestamp_and_height():
+    expiry = _encode_uint64(1, 1234567890) + _encode_uint64(2, 321)
+    encoded = b"".join(
+        [
+            _encode_string(1, "injective-888"),
+            _encode_string(2, "inj1contract"),
+            _encode_string(3, "0xmarket"),
+            _encode_uint64(4, 999),
+            _encode_string(10, "inj1maker"),
+            _encode_string(13, "accepted"),
+            _encode_message(9, expiry),
+        ]
+    )
+
+    decoded = RFQProcessedQuoteType.decode(encoded)
+    client = MakerStreamClient("wss://example.test/injective_rfq_rpc.InjectiveRfqRPC")
+    as_dict = client._processed_quote_to_dict(decoded)
+
+    assert decoded.expiry.timestamp == 1234567890
+    assert decoded.expiry.height == 321
+    assert as_dict["expiry"] == {"ts": 1234567890, "h": 321}
+    assert as_dict["chain_id"] == "injective-888"
+    assert as_dict["contract_address"] == "inj1contract"
+
+
+def test_settlement_decode_preserves_unfilled_action_limit():
+    limit_action = _encode_string(1, "3.25")
+    unfilled_action = _encode_message(1, limit_action)
+    encoded = b"".join(
+        [
+            _encode_uint64(1, 456),
+            _encode_string(2, "0xmarket"),
+            _encode_string(3, "inj1taker"),
+            _encode_string(4, "long"),
+            _encode_string(5, "10"),
+            _encode_string(6, "1"),
+            _encode_string(7, "3.5"),
+            _encode_message(8, unfilled_action),
+            _encode_string(16, "cid-456"),
+        ]
+    )
+
+    decoded = RFQSettlementType.decode(encoded)
+    client = MakerStreamClient("wss://example.test/injective_rfq_rpc.InjectiveRfqRPC")
+    as_dict = client._settlement_to_dict(decoded)
+
+    assert decoded.unfilled_action is not None
+    assert isinstance(decoded.unfilled_action.limit, RFQSettlementLimitActionType)
+    assert decoded.unfilled_action.limit.price == "3.25"
+    assert as_dict["unfilled_action"] == {"limit": {"price": "3.25"}}
+    assert as_dict["cid"] == "cid-456"

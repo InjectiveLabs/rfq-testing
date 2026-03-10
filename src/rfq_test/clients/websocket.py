@@ -912,12 +912,14 @@ class MakerStreamClient(BaseStreamClient):
         """Convert processed quote protobuf to dict."""
         return {
             "rfq_id": str(quote.rfq_id),
+            "chain_id": quote.chain_id,
+            "contract_address": quote.contract_address,
             "market_id": quote.market_id,
             "taker_direction": quote.taker_direction,
             "margin": quote.margin,
             "quantity": quote.quantity,
             "price": quote.price,
-            "expiry": quote.expiry,
+            "expiry": self._expiry_to_dict(quote.expiry),
             "maker": quote.maker,
             "taker": quote.taker,
             "signature": quote.signature,
@@ -925,6 +927,9 @@ class MakerStreamClient(BaseStreamClient):
             "error": quote.error,
             "executed_quantity": quote.executed_quantity,
             "executed_margin": quote.executed_margin,
+            "created_at": quote.created_at,
+            "updated_at": quote.updated_at,
+            "height": quote.height,
             "event_time": quote.event_time,
             "transaction_time": quote.transaction_time,
         }
@@ -939,13 +944,37 @@ class MakerStreamClient(BaseStreamClient):
             "margin": settlement.margin,
             "quantity": settlement.quantity,
             "worst_price": settlement.worst_price,
+            "unfilled_action": self._unfilled_action_to_dict(settlement.unfilled_action),
             "fallback_quantity": settlement.fallback_quantity,
             "fallback_margin": settlement.fallback_margin,
             "cid": settlement.cid,
+            "created_at": settlement.created_at,
+            "updated_at": settlement.updated_at,
             "event_time": settlement.event_time,
             "transaction_time": settlement.transaction_time,
             "height": settlement.height,
         }
+
+    def _expiry_to_dict(self, expiry) -> dict:
+        """Convert RFQExpiryType protobuf to dict."""
+        result = {}
+        timestamp = getattr(expiry, "timestamp", 0)
+        height = getattr(expiry, "height", 0)
+        if timestamp:
+            result["ts"] = timestamp
+        if height:
+            result["h"] = height
+        return result
+
+    def _unfilled_action_to_dict(self, unfilled_action) -> Optional[dict]:
+        """Convert settlement unfilled action protobuf to dict."""
+        if not unfilled_action:
+            return None
+        if getattr(unfilled_action, "limit", None):
+            return {"limit": {"price": unfilled_action.limit.price}}
+        if getattr(unfilled_action, "market", None):
+            return {"market": {}}
+        return None
 
 
 # Backwards compatibility alias
