@@ -33,6 +33,8 @@ class MarketMaker:
         quote_validity_seconds: int = 20,
         chain_id: Optional[str] = None,
         contract_address: Optional[str] = None,
+        subscribe_to_quotes_updates: bool = False,
+        subscribe_to_settlement_updates: bool = False,
     ):
         self.wallet = wallet
         self.ws_url = ws_url
@@ -40,6 +42,8 @@ class MarketMaker:
         self.quote_validity_seconds = quote_validity_seconds
         self.chain_id = chain_id
         self.contract_address = contract_address
+        self.subscribe_to_quotes_updates = subscribe_to_quotes_updates
+        self.subscribe_to_settlement_updates = subscribe_to_settlement_updates
         self._ws_client: Optional[MakerStreamClient] = None
     
     @property
@@ -49,7 +53,12 @@ class MarketMaker:
     
     async def connect(self) -> None:
         """Connect to WebSocket MakerStream."""
-        self._ws_client = MakerStreamClient(self.ws_url)
+        self._ws_client = MakerStreamClient(
+            self.ws_url,
+            maker_address=self.address,
+            subscribe_to_quotes_updates=self.subscribe_to_quotes_updates,
+            subscribe_to_settlement_updates=self.subscribe_to_settlement_updates,
+        )
         await self._ws_client.connect()
     
     async def disconnect(self) -> None:

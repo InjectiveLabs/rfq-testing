@@ -115,20 +115,10 @@ def sign_quote(
     # Contract expects lowercase direction ("long" or "short") for signature verification
     direction_lower = direction.lower() if isinstance(direction, str) else direction.value.lower()
     
-    # Normalize price to ensure consistent string format
-    # - Remove trailing zeros AFTER decimal point only (4.200 -> 4.2)
-    # - Keep integer values as-is (500 stays 500, not 5)
-    # - Do NOT use Decimal.normalize() as it produces scientific notation (500 -> 5E+2)
-    from decimal import Decimal
-    if isinstance(price, (str, Decimal)):
-        price_decimal = Decimal(str(price))
-        # Format without scientific notation
-        price_str = format(price_decimal, 'f')
-        # Only strip trailing zeros if there's a decimal point
-        if '.' in price_str:
-            price_str = price_str.rstrip('0').rstrip('.')
-    else:
-        price_str = str(price)
+    # Preserve the exact price string that will be sent to the indexer.
+    # Any normalization here can make the signed payload differ from the quote
+    # payload (for example trailing zeros), which breaks signature recovery.
+    price_str = str(price)
     
     sign_data = SignQuoteData(
         rfq_id=rfq_id,

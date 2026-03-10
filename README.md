@@ -83,7 +83,7 @@ python examples/test_settlement.py
 | Item | Value |
 |------|-------|
 | Chain ID | `injective-888` |
-| RFQ Contract | `inj1t8hyyle68vd0kzsdehxg0sywttrwmt58jzk29q` |
+| RFQ Contract | `inj1vtswdey9c70n475q7q75wgmkfdw8xw4rcfeqa4` |
 | MakerStream WSS | `wss://testnet.rfq.ws.injective.network/injective_rfq_rpc.InjectiveRfqRPC/MakerStream` |
 | TakerStream WSS | `wss://testnet.rfq.ws.injective.network/injective_rfq_rpc.InjectiveRfqRPC/TakerStream` |
 | Chain gRPC | `testnet-grpc.injective.dev:443` |

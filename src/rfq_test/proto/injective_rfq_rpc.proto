@@ -344,8 +344,8 @@ message CreateRFQRequestType {
 	string quantity = 5;
 	// Worst acceptable price
 	string worst_price = 6;
-	// Expiry timestamp in milliseconds
-	uint64 expiry = 7;
+	// Expiry timestamp or block height
+	RFQExpiryType expiry = 7;
 }
 
 message TakerStreamResponse {
