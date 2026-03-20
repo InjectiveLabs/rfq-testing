@@ -23,6 +23,22 @@ scripts/               # Setup scripts (authz grants, maker registration, fundin
 examples/              # Standalone test scripts
 ```
 
+## Regenerating Proto Code
+
+The Python protobuf bindings in `src/rfq_test/proto/` are generated from `injective_rfq_rpc.proto`. After updating the `.proto` file, regenerate them using the venv:
+
+```bash
+.venv/bin/python -m grpc_tools.protoc \
+  -I src/rfq_test/proto \
+  --python_out=src/rfq_test/proto \
+  --grpc_python_out=src/rfq_test/proto \
+  src/rfq_test/proto/injective_rfq_rpc.proto
+```
+
+This overwrites `injective_rfq_rpc_pb2.py` and `injective_rfq_rpc_pb2_grpc.py`. After regenerating, review any field or type changes in the proto and update `src/rfq_test/clients/websocket.py` accordingly (especially message type names, field types for `expiry`, and nested message structures).
+
+`grpcio-tools` is a dev dependency. Make sure it's installed in your venv (`pip install -e ".[dev]"`) before running the command.
+
 ## Quick Start
 
 ### 1. Install

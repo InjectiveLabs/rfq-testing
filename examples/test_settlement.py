@@ -155,8 +155,18 @@ async def mm_wait_for_post_settlement_updates(mm_client, target_rfq_id, timeout=
                 f"   ✅ Settlement update received: cid={data.cid} "
                 f"height={data.height}"
             )
+            for q in data.quotes:
+                if q.status == "accepted":
+                    print(
+                        f"      quote: maker={q.maker} price={q.price} "
+                        f"status={q.status} "
+                        f"executed_qty={q.executed_quantity} "
+                        f"executed_margin={q.executed_margin}"
+                    )
+                else:
+                    print(f"      quote: maker={q.maker} price={q.price} status={q.status}")
         elif event_type == "error":
-            raise RuntimeError(f"Maker stream error: {data.code}: {data.message}")
+            raise RuntimeError(f"Maker stream error: {data.code}: {data.message_}")
 
         if quote_update and settlement_update:
             return quote_update, settlement_update

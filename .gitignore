@@ -66,3 +66,6 @@ configs/wallets_*.yaml
 
 # Reference / vendor repos (clone for code inspection only, do not commit)
 reference/
+
+# LLM
+.claude
