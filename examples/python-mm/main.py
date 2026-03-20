@@ -89,6 +89,8 @@ class Quote:
     taker: Optional[str] = None
     signature: Optional[str] = None
     nonce: Optional[int] = None
+    maker_subaccount_nonce: int = 0
+    min_fill_quantity: Optional[str] = None
 
 def to_sign_quote(chain_id: str, contract_address: str, req: Optional[RfqRequest], q: Quote) -> dict:
     # specify either type of expiry (timestamp / block_height, not both)
@@ -99,20 +101,24 @@ def to_sign_quote(chain_id: str, contract_address: str, req: Optional[RfqRequest
         expiry["ts"] = q.expiry.ts
 
     if req is None:
-        return {
+        payload = {
             "c": chain_id,
             "ca": contract_address,
             "mi": q.market_id,
             "id": q.nonce, # NOTE: this maker's nonce now become the rfq_id for blind quote, since we have no specific taker to initiate id
             "td": ("long" if q.direction == 1 else "short"), # NOTE: taker direction will be oppsite direction
             "m": q.maker,
+            "ms": q.maker_subaccount_nonce,
             "mq": q.quantity,
             "mm": q.margin,
             "p": q.price,
             "e": expiry,
         }
+        if q.min_fill_quantity is not None:
+            payload["mfq"] = q.min_fill_quantity
+        return payload
 
-    return {
+    payload = {
         "c": chain_id,
         "ca": contract_address,
         "mi": q.market_id,
@@ -122,11 +128,15 @@ def to_sign_quote(chain_id: str, contract_address: str, req: Optional[RfqRequest
         "tm": req.margin,
         "tq": req.quantity,
         "m": q.maker,
+        "ms": q.maker_subaccount_nonce,
         "mq": q.quantity,
         "mm": q.margin,
         "p": q.price,
         "e": expiry,
     }
+    if q.min_fill_quantity is not None:
+        payload["mfq"] = q.min_fill_quantity
+    return payload
 
 """
 Sign an RFQ quote using raw secp256k1 (Ethereum-style) signing.
@@ -169,6 +179,8 @@ async def send_quote(
     maker_addr: str,
     mm_pk: str,
     expiry: Expiry,
+    maker_subaccount_nonce: int = 0,
+    min_fill_quantity: Optional[str] = None,
 ):
     
     if req is None:
@@ -184,7 +196,7 @@ async def send_quote(
         quote = Quote(
             rfq_id=0,
             market_id=INJUSDT_MARKET_ID,
-            direction=direction, 
+            direction=direction,
             margin=margin,
             quantity=quantity,
             price=f"{price:.1f}",
@@ -194,6 +206,8 @@ async def send_quote(
             chain_id=CHAIN_ID,
             contract_address=CONTRACT_ADDRESS,
             nonce=nonce,
+            maker_subaccount_nonce=maker_subaccount_nonce,
+            min_fill_quantity=min_fill_quantity,
         )
     else:
         quote = Quote(
@@ -209,6 +223,8 @@ async def send_quote(
             chain_id=CHAIN_ID,
             contract_address=CONTRACT_ADDRESS,
             nonce=0,
+            maker_subaccount_nonce=maker_subaccount_nonce,
+            min_fill_quantity=min_fill_quantity,
         )
 
     sig = sign_quote(to_sign_quote(CHAIN_ID, CONTRACT_ADDRESS, req, quote), mm_pk)
@@ -267,9 +283,10 @@ async def quote_loop(mm_addr, mm_pk):
                 expiry_ts = Expiry(ts=int((time.time() + 8)*1000))
                 expiry_height = Expiry(h=latest_block_height + 10)
 
-                await send_quote(ws, req, 1.2, mm_addr, mm_pk, expiry=expiry_ts)
-                await send_quote(ws, req, 1.4, mm_addr, mm_pk, expiry=expiry_height)
-                await send_quote(ws, None, 1.3, mm_addr, mm_pk, expiry=expiry_ts)
+                msn = 0  # TODO: fetch maker subaccount nonce from chain
+                await send_quote(ws, req, 1.2, mm_addr, mm_pk, expiry=expiry_ts, maker_subaccount_nonce=msn)
+                await send_quote(ws, req, 1.4, mm_addr, mm_pk, expiry=expiry_height, maker_subaccount_nonce=msn)
+                await send_quote(ws, None, 1.3, mm_addr, mm_pk, expiry=expiry_ts, maker_subaccount_nonce=msn)
             else:
                 print('response msgs:', msg)
 

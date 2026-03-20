@@ -29,13 +29,14 @@ logger = logging.getLogger("rfq_settlement_test")
 
 
 async def drain_stale_requests(mm_client):
-    """Drain any stale requests sitting in the MM queue."""
+    """Drain any stale requests already queued (non-blocking)."""
     count = 0
-    while True:
+    while not mm_client._message_queue.empty():
         try:
-            req = await mm_client.wait_for_request(timeout=2)
-            count += 1
-            logger.info(f"Drained stale request: RFQ#{req['rfq_id']}")
+            event_type, data = mm_client._message_queue.get_nowait()
+            if event_type == "request":
+                logger.info(f"Drained stale request: RFQ#{data.rfq_id}")
+                count += 1
         except Exception:
             break
     if count:
