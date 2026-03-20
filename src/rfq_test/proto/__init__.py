@@ -1,8 +1,8 @@
-"""Protobuf message types for RFQ API."""
+"""Protobuf message types for RFQ API (generated from injective_rfq_rpc.proto)."""
 
-from rfq_test.proto.rfq_messages import (
+from rfq_test.proto.injective_rfq_rpc_pb2 import (
     CreateRFQRequestType,
-    MakerStreamRequest,
+    MakerStreamStreamingRequest,
     MakerStreamResponse,
     QuoteStreamAck,
     RFQExpiryType,
@@ -10,18 +10,24 @@ from rfq_test.proto.rfq_messages import (
     RFQQuoteType,
     RFQRequestType,
     RFQSettlementLimitActionType,
+    RFQSettlementMakerUpdate,
     RFQSettlementMarketActionType,
     RFQSettlementType,
     RFQSettlementUnfilledActionType,
     RequestStreamAck,
     StreamError,
-    TakerStreamRequest,
+    TakerStreamStreamingRequest,
     TakerStreamResponse,
 )
+
+# Backward-compat aliases
+MakerStreamRequest = MakerStreamStreamingRequest
+TakerStreamRequest = TakerStreamStreamingRequest
 
 __all__ = [
     "CreateRFQRequestType",
     "MakerStreamRequest",
+    "MakerStreamStreamingRequest",
     "MakerStreamResponse",
     "QuoteStreamAck",
     "RFQExpiryType",
@@ -29,11 +35,13 @@ __all__ = [
     "RFQQuoteType",
     "RFQRequestType",
     "RFQSettlementLimitActionType",
+    "RFQSettlementMakerUpdate",
     "RFQSettlementMarketActionType",
     "RFQSettlementType",
     "RFQSettlementUnfilledActionType",
     "RequestStreamAck",
     "StreamError",
     "TakerStreamRequest",
+    "TakerStreamStreamingRequest",
     "TakerStreamResponse",
 ]
