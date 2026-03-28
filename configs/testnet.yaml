@@ -14,6 +14,7 @@ chain:
 indexer:
   ws_endpoint: "wss://testnet.rfq.ws.injective.network/injective_rfq_rpc.InjectiveRfqRPC"
   http_endpoint: "https://testnet.rfq.injective.network"
+  grpc_endpoint: "testnet.rfq.grpc.injective.network:443"
   grpc_web_endpoint: "https://testnet.rfq.grpc.injective.network/injective_rfq_rpc.InjectiveRfqRPC"
 
 contract:
