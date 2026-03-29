@@ -724,21 +724,29 @@ class MakerStreamClient(BaseStreamClient):
             signature = "0x" + signature
 
         expiry_ts = int(quote_data.get("expiry", 0))
+        min_fill_quantity = quote_data.get("min_fill_quantity")
+        quote_kwargs = {
+            "chain_id": quote_data.get("chain_id", ""),
+            "contract_address": quote_data.get("contract_address", ""),
+            "market_id": quote_data.get("market_id", ""),
+            "rfq_id": int(quote_data.get("rfq_id", 0)),
+            "taker_direction": taker_direction,
+            "margin": str(quote_data.get("margin", "")),
+            "quantity": str(quote_data.get("quantity", "")),
+            "price": str(quote_data.get("price", "")),
+            "expiry": RFQExpiryType(timestamp=expiry_ts),
+            "maker": quote_data.get("maker", ""),
+            "taker": quote_data.get("taker", ""),
+            "signature": signature,
+            "status": "pending",
+            "transaction_time": int(time.time() * 1000),
+            "maker_subaccount_nonce": int(quote_data.get("maker_subaccount_nonce", 0)),
+        }
+        if min_fill_quantity is not None:
+            quote_kwargs["min_fill_quantity"] = str(min_fill_quantity)
+
         quote = RFQQuoteType(
-            chain_id=quote_data.get("chain_id", ""),
-            contract_address=quote_data.get("contract_address", ""),
-            market_id=quote_data.get("market_id", ""),
-            rfq_id=int(quote_data.get("rfq_id", 0)),
-            taker_direction=taker_direction,
-            margin=str(quote_data.get("margin", "")),
-            quantity=str(quote_data.get("quantity", "")),
-            price=str(quote_data.get("price", "")),
-            expiry=RFQExpiryType(timestamp=expiry_ts),
-            maker=quote_data.get("maker", ""),
-            taker=quote_data.get("taker", ""),
-            signature=signature,
-            status="pending",
-            transaction_time=int(time.time() * 1000),
+            **quote_kwargs,
         )
 
         msg = MakerStreamStreamingRequest(message_type="quote", quote=quote)

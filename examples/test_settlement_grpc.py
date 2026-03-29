@@ -196,6 +196,8 @@ async def mm_wait_and_quote(
 
     taker = received.request_address
     quote_expiry = int(time.time() * 1000) + 60_000
+    maker_subaccount_nonce = 0
+    min_fill_quantity = None
 
     signature = sign_quote(
         private_key=mm_wallet.private_key,
@@ -212,23 +214,32 @@ async def mm_wait_and_quote(
         expiry=quote_expiry,
         chain_id=chain_id,
         contract_address=contract_address,
+        maker_subaccount_nonce=maker_subaccount_nonce,
+        min_fill_quantity=min_fill_quantity,
     )
     if not signature.startswith("0x"):
         signature = "0x" + signature
 
+    quote_kwargs = {
+        "chain_id": chain_id,
+        "contract_address": contract_address,
+        "market_id": received.market_id,
+        "rfq_id": received.rfq_id,
+        "taker_direction": "long",
+        "margin": received.margin,
+        "quantity": received.quantity,
+        "price": str(quote_price),
+        "expiry": RFQExpiryType(timestamp=quote_expiry),
+        "maker": mm_wallet.inj_address,
+        "taker": taker,
+        "signature": signature,
+        "maker_subaccount_nonce": maker_subaccount_nonce,
+    }
+    if min_fill_quantity is not None:
+        quote_kwargs["min_fill_quantity"] = min_fill_quantity
+
     quote = RFQQuoteType(
-        chain_id=chain_id,
-        contract_address=contract_address,
-        market_id=received.market_id,
-        rfq_id=received.rfq_id,
-        taker_direction="long",
-        margin=received.margin,
-        quantity=received.quantity,
-        price=str(quote_price),
-        expiry=RFQExpiryType(timestamp=quote_expiry),
-        maker=mm_wallet.inj_address,
-        taker=taker,
-        signature=signature,
+        **quote_kwargs,
     )
 
     print(f"   📤 MM sending quote (price={quote_price})...")
@@ -262,6 +273,8 @@ async def mm_wait_and_quote(
         "maker": mm_wallet.inj_address,
         "taker": taker,
         "signature": signature,
+        "maker_subaccount_nonce": maker_subaccount_nonce,
+        "min_fill_quantity": min_fill_quantity,
     }
 
 
@@ -289,6 +302,8 @@ async def collect_quotes(
             "taker": data.taker,
             "signature": data.signature,
             "status": data.status,
+            "maker_subaccount_nonce": data.maker_subaccount_nonce,
+            "min_fill_quantity": data.min_fill_quantity,
         }
 
     while (time.monotonic() - start) < timeout:

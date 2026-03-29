@@ -80,6 +80,11 @@ class QuoteFactory:
         if expiry is None:
             validity = validity_seconds or self.default_validity_seconds
             expiry = int(time.time() * 1000) + (validity * 1000)
+
+        maker_subaccount_nonce = int(overrides.pop("maker_subaccount_nonce", 0))
+        min_fill_quantity = overrides.pop("min_fill_quantity", None)
+        if min_fill_quantity is not None:
+            min_fill_quantity = str(min_fill_quantity)
         
         # Sign the quote (include chain_id/contract_address for contract verification)
         signature = sign_quote(
@@ -97,6 +102,8 @@ class QuoteFactory:
             expiry=expiry,
             chain_id=chain_id,
             contract_address=contract_address,
+            maker_subaccount_nonce=maker_subaccount_nonce,
+            min_fill_quantity=min_fill_quantity,
         )
 
         quote = {
@@ -110,7 +117,10 @@ class QuoteFactory:
             "expiry": expiry,
             "maker": maker_address,
             "signature": signature,
+            "maker_subaccount_nonce": maker_subaccount_nonce,
         }
+        if min_fill_quantity is not None:
+            quote["min_fill_quantity"] = min_fill_quantity
         if chain_id is not None:
             quote["chain_id"] = chain_id
         if contract_address is not None:

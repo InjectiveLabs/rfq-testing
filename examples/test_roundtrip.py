@@ -114,6 +114,8 @@ async def main():
     # Step 5: MM builds and sends quote (with ACK wait)
     taker = received.get("taker") or received.get("request_address", "")
     expiry = int(time.time() * 1000) + 20_000
+    maker_subaccount_nonce = 0
+    min_fill_quantity = None
 
     signature = sign_quote(
         private_key=mm_wallet.private_key,
@@ -130,6 +132,8 @@ async def main():
         expiry=expiry,
         chain_id=chain_id,
         contract_address=contract_address,
+        maker_subaccount_nonce=maker_subaccount_nonce,
+        min_fill_quantity=min_fill_quantity,
     )
 
     quote_data = {
@@ -145,6 +149,8 @@ async def main():
         "maker": mm_wallet.inj_address,
         "taker": taker,
         "signature": signature,
+        "maker_subaccount_nonce": maker_subaccount_nonce,
+        "min_fill_quantity": min_fill_quantity,
     }
 
     print(f"\n📤 MM sending quote (price=1.5, expiry={expiry})...")
