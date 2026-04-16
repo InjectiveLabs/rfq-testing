@@ -13,9 +13,10 @@ This guide helps you avoid common pitfalls and build correctly from day one. You
 4. [Quote Signing](#quote-signing)
 5. [Indexer Integration (WebSocket)](#indexer-integration-websocket)
 6. [Contract Expectations](#contract-expectations)
-7. [Error Handling](#error-handling)
-8. [Production Tips](#production-tips)
-9. [Quick Reference](#quick-reference)
+7. [Conditional Orders (TP/SL)](#conditional-orders-tpsl)
+8. [Error Handling](#error-handling)
+9. [Production Tips](#production-tips)
+10. [Quick Reference](#quick-reference)
 
 ---
 
@@ -136,27 +137,31 @@ for msg_type in MSG_TYPES:
 
 ### SignQuote Payload (Contract Verification)
 
-The contract verifies the maker's signature by building a JSON payload and hashing it with **keccak256**. The payload must match exactly.
+The contract verifies the maker's signature by building a JSON payload and hashing it with **keccak256**. The payload must match exactly — wrong field order or missing fields will cause signature rejection.
 
 ### Field Order and Keys
 
-| Key | Field | Type |
-|-----|-------|------|
-| `c` | chain_id | string |
-| `ca` | contract_address | string |
-| `mi` | market_id | string |
-| `id` | rfq_id | number |
-| `t` | taker | string (Injective addr) |
-| `td` | taker_direction | "long" or "short" |
-| `tm` | taker_margin | string |
-| `tq` | taker_quantity | string |
-| `m` | maker | string |
-| `mq` | maker_quantity | string |
-| `mm` | maker_margin | string |
-| `p` | price | string |
-| `e` | expiry | object: `{"ts": <timestamp_ms>}` or `{"h": <block_height>}` |
+> **IMPORTANT:** The field `ms` (maker_subaccount_nonce) is required and must appear between `m` and `mq`. Omitting it or placing it elsewhere will cause the contract to reject the signature.
 
-**Order matters.** Serialize with `json.dumps(..., separators=(",", ":"))` and no spaces. Do not use `sort_keys=True`.
+| Key | Field | Type | Notes |
+|-----|-------|------|-------|
+| `c` | chain_id | string | |
+| `ca` | contract_address | string | |
+| `mi` | market_id | string | |
+| `id` | rfq_id | number | |
+| `t` | taker | string | Injective address |
+| `td` | taker_direction | string | `"long"` or `"short"` |
+| `tm` | taker_margin | string | FPDecimal |
+| `tq` | taker_quantity | string | FPDecimal |
+| `m` | maker | string | Injective address |
+| `ms` | maker_subaccount_nonce | number | Required. Use `0` if not using subaccounts. |
+| `mq` | maker_quantity | string | FPDecimal |
+| `mm` | maker_margin | string | FPDecimal |
+| `p` | price | string | FPDecimal |
+| `e` | expiry | object | `{"ts": <unix_ms>}` or `{"h": <block_height>}` |
+| `mfq` | min_fill_quantity | string | Optional V2 field. Append at end only when needed. |
+
+**Order matters.** Serialize with `json.dumps(..., separators=(",", ":"))` — no spaces, no `sort_keys`. The contract hashes this exact JSON string.
 
 ### Standalone Signing Example
 
@@ -171,7 +176,7 @@ def sign_quote(
     contract_address: str,
     rfq_id: int,
     market_id: str,
-    direction: str,  # "long" or "short"
+    direction: str,           # "long" or "short"
     taker: str,
     taker_margin: str,
     taker_quantity: str,
@@ -179,7 +184,9 @@ def sign_quote(
     maker_margin: str,
     maker_quantity: str,
     price: str,
-    expiry: int,  # timestamp in milliseconds
+    expiry: int,              # Unix timestamp in milliseconds
+    maker_subaccount_nonce: int = 0,   # required — use 0 for default subaccount
+    min_fill_quantity: str = None,     # optional V2 field
 ) -> str:
     """Sign a quote. Returns hex signature (without 0x prefix)."""
     payload = {
@@ -192,11 +199,15 @@ def sign_quote(
         "tm": taker_margin,
         "tq": taker_quantity,
         "m": maker,
+        "ms": maker_subaccount_nonce,   # REQUIRED — position between m and mq
         "mq": maker_quantity,
         "mm": maker_margin,
         "p": price,
-        "e": {"ts": expiry},  # expiry as nested object with timestamp
+        "e": {"ts": expiry},
     }
+    if min_fill_quantity is not None:
+        payload["mfq"] = min_fill_quantity   # append at end, only when needed
+
     json_str = json.dumps(payload, separators=(",", ":"))
     message_hash = keccak(json_str.encode("utf-8"))
 
@@ -208,11 +219,15 @@ def sign_quote(
     return sig_bytes.hex()
 ```
 
-### Price Format
+### Price and Decimal Format
 
-- Use **human-readable decimal strings** (e.g. `"4.5"`, `"1.461"`).
+- Use **human-readable decimal strings** (e.g. `"4.5"`, `"1.461"`). No trailing zeros — `"4.50"` and `"4.5"` produce different hashes.
 - Do **not** use 1e6-scaled integers.
-- The price in the signed payload must be **identical** to the price you send in `AcceptQuote`. If they differ, signature verification fails.
+- The price in the signed payload must be **byte-for-byte identical** to the price you send in `AcceptQuote`. If they differ, signature verification fails.
+
+### maker_subaccount_nonce
+
+`maker_subaccount_nonce` is the subaccount index used when your address was registered as a maker. If registration was done with the default subaccount (nonce 0), use `0`. Contact the platform operator if you are unsure what nonce was used.
 
 ### Signature for Indexer
 
@@ -282,7 +297,7 @@ The indexer expects a specific field order for `RFQQuoteType`. If you encode in 
 | 12 | signature | string (hex with 0x) |
 | ... | (status, timestamps, etc.) | |
 
-Reference: [injective-indexer](https://github.com/InjectiveLabs/injective-indexer) `api/gen/grpc/injective_rfq_rpc/pb/injective_rfq_rpc.proto`.
+The field table above is the canonical reference for quote encoding.
 
 ---
 
@@ -297,7 +312,105 @@ All numeric fields (margin, quantity, price, worst_price) use **FPDecimal**: hum
 - **Long:** `worst_price` must be ≤ `mark_price × 1.1` (10% slippage)
 - **Short:** `worst_price` must be ≥ `mark_price × 0.9`
 
-Fetch mark price from the chain (e.g. LCD derivative markets endpoint) and set worst_price accordingly.
+Fetch mark price from the chain LCD endpoint and set worst_price accordingly:
+
+```
+GET {lcd}/injective/exchange/v1beta1/derivative/markets/{market_id}
+```
+
+The response includes `perpetualMarketInfo.markPrice` (or similar field depending on the market type).
+
+### Market Tick Sizes and Minimum Notional
+
+> **Critical pitfall:** Every price and quantity used in a quote or conditional order MUST be quantized to the market's tick sizes **before** you sign it. The signed value and the value sent in AcceptQuote (and to the indexer) must be byte-for-byte identical. If you sign an unquantized price and then quantize before sending, the signature verification will fail. If you skip quantization entirely, the exchange will reject the synthetic trade with an error such as `"invalid price tick"` — even though the signature was valid.
+>
+> **Correct order:** compute price → quantize to tick → sign → send
+> **Wrong order:**   compute price → sign → quantize → send  ← signature mismatch!
+
+Each derivative market has tick size constraints:
+
+| Parameter | Description |
+|---|---|
+| `min_price_tick_size` | Prices must be exact multiples of this value |
+| `min_quantity_tick_size` | Quantities must be exact multiples of this value |
+| Minimum notional | Some markets enforce `price × quantity ≥ min_notional` |
+
+**Fetching tick sizes from the chain:**
+
+```
+GET {lcd}/injective/exchange/v2/derivative/markets/{market_id}
+```
+
+Inside the response look for `market.market.min_price_tick_size` and `market.market.min_quantity_tick_size`. These are returned as human-readable decimal strings (not scaled by 1e18).
+
+**Using the SDK helpers (MM quote price):**
+
+The rounding direction for the MM's quote price matters. The contract checks:
+- For LONG direction (taker buys): `mm_price ≤ taker_worst_price` → MM should round **DOWN** (`ROUND_FLOOR`) to stay within the taker's limit
+- For SHORT direction (taker sells): `mm_price ≥ taker_worst_price` → MM should round **UP** (`ROUND_CEILING`) to stay above the taker's floor
+
+```python
+from decimal import Decimal, ROUND_FLOOR, ROUND_CEILING
+from rfq_test.utils.price import (
+    get_market_tick_sizes,
+    quantize_to_tick,
+    quantize_quantity,
+)
+
+# Fetch once per session (PriceFetcher also caches this as a side-effect)
+ticks = await get_market_tick_sizes(lcd_endpoint, market_id)
+price_tick = ticks.get("min_price_tick")  # e.g. Decimal("0.001")
+qty_tick   = ticks.get("min_qty_tick")    # e.g. Decimal("0.001")
+
+# Apply before signing — NOT after
+spread = mark_price * Decimal("0.005")  # 0.5% spread
+
+# MM's quote price: direction-aware rounding
+if direction == "long":   # taker buys → MM sells at higher price
+    raw_price = mark_price + spread
+    quote_price = quantize_to_tick(raw_price, price_tick, rounding=ROUND_FLOOR)   # stay ≤ worst_price
+else:                     # taker sells → MM buys at lower price
+    raw_price = mark_price - spread
+    quote_price = quantize_to_tick(raw_price, price_tick, rounding=ROUND_CEILING)  # stay ≥ worst_price
+
+# Quantities always floor-round (never exceed taker's requested amount)
+quantity = quantize_quantity(raw_quantity, qty_tick)
+
+# Now sign using these quantized strings — SAME strings sent in the proto message
+signature = sign_quote(
+    price=quote_price,      # ← quantized
+    maker_quantity=quantity, # ← quantized
+    ...
+)
+# Send quote_price and quantity unchanged in the RFQQuoteType proto message
+```
+
+**If you don't use the helpers**, implement the quantization yourself:
+
+```python
+from decimal import Decimal, ROUND_FLOOR, ROUND_CEILING
+
+def quantize_to_tick(value, tick_size, rounding=ROUND_FLOOR):
+    d = Decimal(str(value))
+    t = Decimal(str(tick_size))
+    quantized = (d / t).to_integral_value(rounding=rounding) * t
+    return format(quantized.normalize(), "f")
+
+# LONG direction: round down so MM's price ≤ taker's worst_price
+quote_price = quantize_to_tick(raw_price, "0.001", rounding=ROUND_FLOOR)
+# sign quote_price, then send quote_price unchanged
+```
+
+**Minimum notional check:**
+
+Some markets require `price × quantity ≥ min_notional`. Verify before sending:
+
+```python
+if Decimal(quote_price) * Decimal(quantity) < min_notional:
+    raise ValueError("Order below minimum notional — increase price or quantity")
+```
+
+`min_notional` is available in the same market info endpoint under `market.market.minNotional` (may appear as `min_notional` in v2).
 
 ### Direction
 
@@ -311,7 +424,228 @@ If the taker requests quantity X and the MM only quotes Y < X, the contract can:
 
 ---
 
-## Error Handling
+## Conditional Orders (TP/SL)
+
+Conditional orders let a taker pre-sign a trade that executes automatically when the mark price crosses a threshold. This enables take-profit and stop-loss strategies without requiring the taker to be online.
+
+The RFQ indexer monitors mark prices and triggers the order when the condition is met — it then acts as the RFQ requester on the taker's behalf.
+
+### Trigger Types
+
+| Trigger type | Fires when | Typical use |
+|---|---|---|
+| `mark_price_gte` | mark price ≥ trigger_price | Take-profit for short, stop-loss for long |
+| `mark_price_lte` | mark price ≤ trigger_price | Take-profit for long, stop-loss for short |
+
+### Key Fields
+
+| Field | Type | Description |
+|---|---|---|
+| `version` | int | Protocol version — use `1` |
+| `chain_id` | string | Chain ID (e.g. `"injective-888"`) |
+| `contract_address` | string | RFQ contract address |
+| `taker` | string | Taker's Injective address |
+| `epoch` | int | Incremented by `CancelAllIntents`. Start at `1`; increment after each global cancel. |
+| `rfq_id` | int | Unique order ID — use current Unix timestamp in ms |
+| `market_id` | string | Derivative market ID (0x hex) |
+| `subaccount_nonce` | int | Subaccount index (default `0`) |
+| `lane_version` | int | Incremented by `CancelIntentLane`. Start at `1`; increment after each per-market cancel. |
+| `deadline_ms` | int | Order expiry as Unix ms timestamp. Maximum 30 days from creation. |
+| `direction` | string | `"long"` or `"short"` |
+| `quantity` | string | Order quantity (FPDecimal) |
+| `margin` | string | Must be `"0"` for v1 — these are reduce-only (close-position) orders |
+| `worst_price` | string | Worst acceptable fill price |
+| `min_total_fill_quantity` | string | Minimum quantity that must be filled for the order to settle |
+| `trigger_type` | string | `"mark_price_gte"` or `"mark_price_lte"` |
+| `trigger_price` | string | Price threshold that triggers the order |
+| `unfilled_action` | string/null | Optional: action for any unfilled quantity after trigger |
+| `cid` | string/null | Optional client ID for tracking |
+| `allowed_relayer` | string/null | Optional: restrict which address can relay this order |
+
+### Signing a Conditional Order
+
+The canonical JSON field order is fixed — do not reorder. The `"trigger"` field is a **nested object** where the key is the trigger type and the value is the price string.
+
+```python
+import json
+import time
+from decimal import Decimal
+from eth_account import Account
+from eth_hash.auto import keccak
+
+def sign_conditional_order(
+    private_key: str,
+    version: int,
+    chain_id: str,
+    contract_address: str,
+    taker: str,
+    epoch: int,
+    rfq_id: int,
+    market_id: str,
+    subaccount_nonce: int,
+    lane_version: int,
+    deadline_ms: int,
+    direction: str,           # "long" or "short"
+    quantity: str,
+    worst_price: str,
+    min_total_fill_quantity: str,
+    trigger_type: str,        # "mark_price_gte" or "mark_price_lte"
+    trigger_price: str,
+    margin: str = "0",        # must be "0" for v1 orders
+    unfilled_action=None,
+    cid=None,
+    allowed_relayer=None,
+) -> str:
+    """Sign a conditional order. Returns "0x" + hex signature (65 bytes)."""
+    canonical = {
+        "version": version,
+        "chain_id": chain_id,
+        "contract_address": contract_address,
+        "taker": taker,
+        "epoch": epoch,
+        "rfq_id": rfq_id,
+        "market_id": market_id,
+        "subaccount_nonce": subaccount_nonce,
+        "lane_version": lane_version,
+        "deadline_ms": deadline_ms,
+        "direction": direction.lower(),
+        "quantity": quantity,
+        "margin": margin,
+        "worst_price": worst_price,
+        "min_total_fill_quantity": min_total_fill_quantity,
+        "trigger": {trigger_type: trigger_price},   # nested object, not flat fields
+        "unfilled_action": unfilled_action,
+        "cid": cid,
+        "allowed_relayer": allowed_relayer,
+    }
+    payload = json.dumps(canonical, separators=(",", ":"))
+    message_hash = keccak(payload.encode("utf-8"))
+
+    if private_key.startswith("0x"):
+        private_key = private_key[2:]
+    account = Account.from_key(bytes.fromhex(private_key))
+    sig = account.unsafe_sign_hash(message_hash)
+    sig_bytes = sig.r.to_bytes(32, "big") + sig.s.to_bytes(32, "big") + bytes([sig.v])
+    return "0x" + sig_bytes.hex()
+```
+
+### Submitting via TakerStream (WebSocket)
+
+Use `message_type = "conditional_order"` with the order in field 3 and signature in field 4. The server responds with a `conditional_order_ack` message.
+
+```python
+from rfq_test.clients.websocket import TakerStreamClient
+from rfq_test.crypto.signing import sign_conditional_order
+
+rfq_id = int(time.time() * 1000)
+deadline_ms = rfq_id + 24 * 60 * 60 * 1000   # 24 hours from now
+
+signature = sign_conditional_order(
+    private_key=PRIVATE_KEY,
+    version=1,
+    chain_id=CHAIN_ID,
+    contract_address=CONTRACT_ADDRESS,
+    taker=taker_address,
+    epoch=1,
+    rfq_id=rfq_id,
+    market_id=MARKET_ID,
+    subaccount_nonce=0,
+    lane_version=1,
+    deadline_ms=deadline_ms,
+    direction="short",
+    quantity="1",
+    worst_price="132",
+    min_total_fill_quantity="1",
+    trigger_type="mark_price_gte",
+    trigger_price="120",
+    margin="0",
+)
+
+order_body = {
+    "version": 1, "chain_id": CHAIN_ID, "contract_address": CONTRACT_ADDRESS,
+    "taker": taker_address, "epoch": 1, "rfq_id": rfq_id,
+    "market_id": MARKET_ID, "subaccount_nonce": 0, "lane_version": 1,
+    "deadline_ms": deadline_ms, "direction": "short",
+    "quantity": "1", "margin": "0", "worst_price": "132",
+    "min_total_fill_quantity": "1",
+    "trigger_type": "mark_price_gte", "trigger_price": "120",
+    "unfilled_action": None, "cid": None, "allowed_relayer": None,
+}
+
+async with TakerStreamClient(ws_base_url, request_address=taker_address) as client:
+    result = await client.send_conditional_order(
+        order_body=order_body,
+        signature=signature,
+        wait_for_ack=True,
+    )
+    print(f"ACK: rfq_id={result['rfq_id']} status={result['status']}")
+```
+
+### Submitting via REST API
+
+As an alternative to the WebSocket stream, you can submit via HTTP:
+
+```python
+import httpx
+
+async with httpx.AsyncClient() as http:
+    resp = await http.post(
+        f"{indexer_http_endpoint}/conditionalOrder",
+        json={"order": order_body, "signature": signature},
+    )
+    resp.raise_for_status()
+    print(resp.json())
+```
+
+### Listing Active Orders
+
+```python
+async with httpx.AsyncClient() as http:
+    resp = await http.get(
+        f"{indexer_http_endpoint}/conditionalOrders",
+        params={"taker": taker_address},
+    )
+    orders = resp.json()
+```
+
+### Cancellation
+
+There are two on-chain cancellation methods. Both work by incrementing a counter that invalidates any orders signed with the old counter value.
+
+**CancelIntentLane** — cancels all orders for one `(taker, market_id, subaccount_nonce)` lane:
+
+```python
+from rfq_test.clients.contract import ContractClient
+
+client = ContractClient(contract_config, chain_config)
+tx_hash = await client.cancel_intent_lane(
+    private_key=PRIVATE_KEY,
+    market_id=MARKET_ID,
+    subaccount_nonce=0,
+)
+```
+
+After this call, increment `lane_version` by 1 in all future orders for this market lane.
+
+**CancelAllIntents** — cancels all orders across every market for the taker:
+
+```python
+tx_hash = await client.cancel_all_intents(private_key=PRIVATE_KEY)
+```
+
+After this call, increment `epoch` by 1 in all future conditional orders.
+
+### epoch and lane_version Tracking
+
+- Start `epoch` at `1`. Increment by 1 after each `CancelAllIntents` call.
+- Start `lane_version` at `1`. Increment by 1 after each `CancelIntentLane` call on that market.
+- The indexer tracks the current values on-chain. Orders signed with a stale `epoch` or `lane_version` are rejected.
+
+### See Also
+
+`scripts/conditional_order_example.py` in this repo demonstrates the full create → list → cancel flow.
+
+---
 
 ### Never Trust a Tx Hash Alone
 
@@ -348,10 +682,11 @@ if code != 0:
 | Topic | Do | Don't |
 |-------|----|-------|
 | **Grants** | Use gas heuristics; both MsgSend + MsgPrivilegedExecuteContract for MM and Retail; expiration: null; GenericAuthorization | Use simulation for grants; use SendAuthorization; grant only MsgSend for Retail |
-| **Signing** | Field order c, ca, mi, id, t, td, tm, tq, m, mq, mm, p, e; keccak256; lowercase direction | Use sort_keys; different price in sign vs AcceptQuote; use 0/1 for direction |
-| **Indexer** | request_address header for TakerStream; maker_address and optional maker subscription headers for MakerStream; "long"/"short"; signature with 0x prefix; match proto field order | Use numeric direction; omit required stream headers; wrong proto field order |
-| **Contract** | FPDecimal strings; worst_price within 10% of mark; check tx_response.code | Use 1e6 integers; assume tx success from hash only |
+| **Signing** | Field order `c, ca, mi, id, t, td, tm, tq, m, ms, mq, mm, p, e`; include `ms` (maker_subaccount_nonce); keccak256; lowercase direction; quantize price before signing | Omit `ms`; use old field order without `ms`; use sort_keys; sign unquantized price |
+| **Indexer** | request_address header for TakerStream; maker_address + optional subscription headers for MakerStream; "long"/"short"; signature with 0x prefix; include maker_subaccount_nonce + min_fill_quantity in quote proto | Use numeric direction; omit required headers; skip new proto fields 19/20 |
+| **Contract** | FPDecimal strings; worst_price within 10% of mark; prices quantized to min_price_tick_size before signing; check tx_response.code | Use 1e6 integers; ignore tick sizes; sign then quantize; assume tx success from hash only |
 | **Errors** | Check code == 0; read rawLog on failure | Assume success from tx hash |
+| **Conditional Orders** | Sign with exact field order; use `"trigger": {type: price}` nested object; `margin="0"` for v1; track epoch and lane_version | Flat trigger fields; non-zero margin; reuse stale epoch/lane_version after cancel |
 
 ---
 

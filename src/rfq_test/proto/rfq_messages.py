@@ -3,11 +3,15 @@
 Manual protobuf encoding/decoding for the RFQ API messages.
 This avoids code generation and external dependencies beyond the standard protobuf library.
 
-Field layouts match the injective-indexer proto (injective_rfq_rpc package):
+Field layouts match the injective_rfq_rpc service proto:
 - CreateRFQRequestType: field 1 = client_id (string), 7 fields total
 - RFQRequestType: field 1 = client_id (string), field 2 = rfq_id (uint64), shifted +1
+- RFQQuoteType: fields 1-20; fields 19=maker_subaccount_nonce, 20=min_fill_quantity added in V2
 - RequestStreamAck: field 1 = rfq_id, field 2 = client_id, field 3 = status
 - QuoteStreamAck: field 1 = rfq_id, field 2 = status
+- ConditionalOrderInput: fields 1-20; sent inside TakerStreamRequest for TP/SL orders
+- TakerStreamRequest: field 3 = conditional_order, field 4 = conditional_order_signature
+- TakerStreamResponse: field 5 = conditional_order_ack
 """
 
 from dataclasses import dataclass, field
@@ -246,12 +250,18 @@ class RFQRequestType:
 
 @dataclass
 class RFQQuoteType:
-    """RFQ quote message.
-    
+    """RFQ quote message sent by makers and received by takers.
+
     Fields: 1=chain_id, 2=contract_address, 3=market_id, 4=rfq_id,
     5=taker_direction, 6=margin, 7=quantity, 8=price, 9=expiry,
     10=maker, 11=taker, 12=signature, 13=status, 14=created_at,
-    15=updated_at, 16=height, 17=event_time, 18=transaction_time.
+    15=updated_at, 16=height, 17=event_time, 18=transaction_time,
+    19=maker_subaccount_nonce, 20=min_fill_quantity.
+
+    Fields 19 and 20 are V2 additions. maker_subaccount_nonce must match
+    the nonce used when the maker was registered. min_fill_quantity is
+    optional and sets the minimum partial fill the maker will accept.
+    Both fields must also be included in the signed payload (see signing.py).
     """
     market_id: str = ""
     rfq_id: int = 0
@@ -271,6 +281,8 @@ class RFQQuoteType:
     transaction_time: int = 0
     chain_id: str = ""
     contract_address: str = ""
+    maker_subaccount_nonce: int = 0
+    min_fill_quantity: str = ""
 
     def encode(self) -> bytes:
         result = b""
@@ -293,6 +305,8 @@ class RFQQuoteType:
         result += _encode_uint64(16, self.height)
         result += _encode_uint64(17, self.event_time)
         result += _encode_uint64(18, self.transaction_time if self.transaction_time else 0)
+        result += _encode_uint64(19, self.maker_subaccount_nonce)
+        result += _encode_string(20, self.min_fill_quantity)
         return result
 
     @classmethod
@@ -306,7 +320,7 @@ class RFQQuoteType:
             pos = new_pos
 
             if wire_type == 0:  # Varint
-                if field_num in (4, 16, 17, 18):
+                if field_num in (4, 16, 17, 18, 19):
                     value, pos = _DecodeVarint(data, pos)
                     if field_num == 4:
                         result.rfq_id = value
@@ -316,6 +330,8 @@ class RFQQuoteType:
                         result.event_time = value
                     elif field_num == 18:
                         result.transaction_time = value
+                    elif field_num == 19:
+                        result.maker_subaccount_nonce = value
                 else:
                     value, pos = _DecodeVarint32(data, pos)
                     if field_num == 14:
@@ -352,6 +368,8 @@ class RFQQuoteType:
                         result.signature = value
                     elif field_num == 13:
                         result.status = value
+                    elif field_num == 20:
+                        result.min_fill_quantity = value
 
         return result
 
@@ -688,36 +706,219 @@ class StreamError:
 
 
 # ============================================================
+# Conditional Order Stream Types
+# ============================================================
+
+@dataclass
+class ConditionalOrderInput:
+    """Conditional order (TP/SL) payload sent inside TakerStreamRequest.
+
+    Field numbers match the ConditionalOrderInput definition in the
+    injective_rfq_rpc service:
+    1=version, 2=chain_id, 3=contract_address, 4=taker, 5=epoch, 6=rfq_id,
+    7=market_id, 8=subaccount_nonce, 9=lane_version, 10=deadline_ms,
+    11=direction, 12=quantity, 13=margin, 14=worst_price,
+    15=min_total_fill_quantity, 16=trigger_type, 17=trigger_price,
+    18=unfilled_action, 19=cid, 20=allowed_relayer.
+
+    All string numeric fields (quantity, margin, worst_price, etc.) use
+    human-readable decimal strings — not scaled integers.
+
+    margin must be "0" for v1 reduce-only (close-position) orders.
+    deadline_ms is a Unix timestamp in milliseconds; max 30 days from now.
+    """
+    version: int = 0
+    chain_id: str = ""
+    contract_address: str = ""
+    taker: str = ""
+    epoch: int = 0
+    rfq_id: int = 0
+    market_id: str = ""
+    subaccount_nonce: int = 0
+    lane_version: int = 0
+    deadline_ms: int = 0
+    direction: str = ""
+    quantity: str = ""
+    margin: str = ""
+    worst_price: str = ""
+    min_total_fill_quantity: str = ""
+    trigger_type: str = ""
+    trigger_price: str = ""
+    unfilled_action: str = ""
+    cid: str = ""
+    allowed_relayer: str = ""
+
+    def encode(self) -> bytes:
+        result = b""
+        result += _encode_uint64(1, self.version)
+        result += _encode_string(2, self.chain_id)
+        result += _encode_string(3, self.contract_address)
+        result += _encode_string(4, self.taker)
+        result += _encode_uint64(5, self.epoch)
+        result += _encode_uint64(6, self.rfq_id)
+        result += _encode_string(7, self.market_id)
+        result += _encode_uint64(8, self.subaccount_nonce)
+        result += _encode_uint64(9, self.lane_version)
+        result += _encode_uint64(10, self.deadline_ms)
+        result += _encode_string(11, self.direction)
+        result += _encode_string(12, self.quantity)
+        result += _encode_string(13, self.margin)
+        result += _encode_string(14, self.worst_price)
+        result += _encode_string(15, self.min_total_fill_quantity)
+        result += _encode_string(16, self.trigger_type)
+        result += _encode_string(17, self.trigger_price)
+        result += _encode_string(18, self.unfilled_action)
+        result += _encode_string(19, self.cid)
+        result += _encode_string(20, self.allowed_relayer)
+        return result
+
+
+@dataclass
+class ConditionalOrderResponseType:
+    """Conditional order data returned inside ConditionalOrderAck.
+
+    Fields: 1=rfq_id, 2=market_id, 3=direction, 4=margin, 5=quantity,
+    6=worst_price, 7=request_address, 8=trigger_price, 9=status,
+    10=created_at, 11=updated_at, 12=expires_at, 13=trigger_type,
+    14=min_total_fill_quantity.
+    """
+    rfq_id: int = 0
+    market_id: str = ""
+    direction: str = ""
+    margin: str = ""
+    quantity: str = ""
+    worst_price: str = ""
+    request_address: str = ""
+    trigger_price: str = ""
+    status: str = ""
+    created_at: int = 0
+    updated_at: int = 0
+    expires_at: int = 0
+    trigger_type: str = ""
+    min_total_fill_quantity: str = ""
+
+    @classmethod
+    def decode(cls, data: bytes) -> "ConditionalOrderResponseType":
+        result = cls()
+        pos = 0
+        while pos < len(data):
+            tag_wire, new_pos = _DecodeVarint32(data, pos)
+            field_num = tag_wire >> 3
+            wire_type = tag_wire & 0x7
+            pos = new_pos
+
+            if wire_type == 0:
+                value, pos = _DecodeVarint(data, pos)
+                if field_num == 1:
+                    result.rfq_id = value
+                elif field_num == 10:
+                    result.created_at = value
+                elif field_num == 11:
+                    result.updated_at = value
+                elif field_num == 12:
+                    result.expires_at = value
+            elif wire_type == 2:
+                length, pos = _DecodeVarint32(data, pos)
+                value = data[pos:pos + length].decode("utf-8")
+                pos += length
+                if field_num == 2:
+                    result.market_id = value
+                elif field_num == 3:
+                    result.direction = value
+                elif field_num == 4:
+                    result.margin = value
+                elif field_num == 5:
+                    result.quantity = value
+                elif field_num == 6:
+                    result.worst_price = value
+                elif field_num == 7:
+                    result.request_address = value
+                elif field_num == 8:
+                    result.trigger_price = value
+                elif field_num == 9:
+                    result.status = value
+                elif field_num == 13:
+                    result.trigger_type = value
+                elif field_num == 14:
+                    result.min_total_fill_quantity = value
+
+        return result
+
+
+@dataclass
+class ConditionalOrderAck:
+    """Acknowledgment returned by the server after a conditional order is accepted via stream.
+
+    Field 1=order (ConditionalOrderResponseType).
+    """
+    order: Optional[ConditionalOrderResponseType] = None
+
+    @classmethod
+    def decode(cls, data: bytes) -> "ConditionalOrderAck":
+        result = cls()
+        pos = 0
+        while pos < len(data):
+            tag_wire, new_pos = _DecodeVarint32(data, pos)
+            field_num = tag_wire >> 3
+            wire_type = tag_wire & 0x7
+            pos = new_pos
+
+            if wire_type == 2:
+                length, pos = _DecodeVarint32(data, pos)
+                value_bytes = data[pos:pos + length]
+                pos += length
+                if field_num == 1:
+                    result.order = ConditionalOrderResponseType.decode(value_bytes)
+
+        return result
+
+
+# ============================================================
 # Taker Stream Messages
 # ============================================================
 
 @dataclass
 class TakerStreamRequest:
     """Message sent by taker in bidirectional stream.
-    
-    Fields: 1=message_type, 2=CreateRFQRequestType.
+
+    Fields: 1=message_type, 2=request, 3=conditional_order,
+    4=conditional_order_signature.
+
+    Set message_type to "ping" for keep-alive, "request" when sending an
+    RFQ request (populate field 2), or "conditional_order" when submitting
+    a TP/SL order (populate fields 3 and 4).
     """
-    message_type: str = ""  # "ping" | "request"
+    message_type: str = ""  # "ping" | "request" | "conditional_order"
     request: Optional[CreateRFQRequestType] = None
+    conditional_order: Optional[ConditionalOrderInput] = None
+    conditional_order_signature: str = ""
 
     def encode(self) -> bytes:
         result = b""
         result += _encode_string(1, self.message_type)
         if self.request is not None:
             result += _encode_message(2, self.request.encode())
+        if self.conditional_order is not None:
+            result += _encode_message(3, self.conditional_order.encode())
+        result += _encode_string(4, self.conditional_order_signature)
         return result
 
 
 @dataclass
 class TakerStreamResponse:
     """Message received by taker from server.
-    
-    Fields: 1=message_type, 2=quote, 3=request_ack, 4=error.
+
+    Fields: 1=message_type, 2=quote, 3=request_ack, 4=error,
+    5=conditional_order_ack.
+
+    message_type values: "pong", "quote", "request_ack", "error",
+    "conditional_order_ack".
     """
-    message_type: str = ""  # "pong" | "quote" | "request_ack" | "error"
+    message_type: str = ""
     quote: Optional[RFQQuoteType] = None
     request_ack: Optional[RequestStreamAck] = None
     error: Optional[StreamError] = None
+    conditional_order_ack: Optional[ConditionalOrderAck] = None
 
     @classmethod
     def decode(cls, data: bytes) -> "TakerStreamResponse":
@@ -744,6 +945,8 @@ class TakerStreamResponse:
                     result.request_ack = RequestStreamAck.decode(value_bytes)
                 elif field_num == 4:
                     result.error = StreamError.decode(value_bytes)
+                elif field_num == 5:
+                    result.conditional_order_ack = ConditionalOrderAck.decode(value_bytes)
 
         return result
 

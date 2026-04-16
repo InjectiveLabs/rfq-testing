@@ -62,12 +62,12 @@ def _normalize_contract_quote(quote: dict) -> dict:
 
 
 class ContractClient:
-    """Client for interacting with RFQ smart contract.
-    
+    """Client for interacting with the RFQ smart contract.
+
     Handles contract execution messages:
-    - RegisterMaker
-    - RevokeMaker
-    - AcceptQuote
+    - RegisterMaker / RevokeMaker (admin only)
+    - AcceptQuote (taker)
+    - CancelIntentLane / CancelAllIntents (taker — cancel conditional orders)
     """
     
     def __init__(
@@ -682,3 +682,137 @@ class ContractClient:
             if "nonce" in error_msg or "replay" in error_msg:
                 raise ContractValidationError(f"Nonce error: {e}") from e
             raise ContractExecutionError(f"AcceptQuote failed: {e}") from e
+
+    async def cancel_intent_lane(
+        self,
+        private_key: str,
+        market_id: str,
+        subaccount_nonce: int = 0,
+    ) -> str:
+        """Cancel all active conditional orders for a specific market lane.
+
+        Calls ``CancelIntentLane { market_id, subaccount_nonce }`` on the RFQ contract.
+        The contract increments the lane version for (taker, market_id, subaccount_nonce).
+        The indexer then marks any conditional orders signed with the previous lane version
+        as cancelled.
+
+        Use this to cancel conditional orders on a single market without affecting orders
+        on other markets. To cancel across all markets in one call, use cancel_all_intents().
+
+        Args:
+            private_key: Taker's private key. The sender's address becomes the taker.
+            market_id: Derivative market ID (0x hex string).
+            subaccount_nonce: Subaccount index used when the orders were created (default 0).
+
+        Returns:
+            Transaction hash.
+        """
+        msg = {
+            "cancel_intent_lane": {
+                "market_id": market_id,
+                "subaccount_nonce": subaccount_nonce,
+            }
+        }
+        logger.info("CancelIntentLane: market=%s subaccount_nonce=%d", market_id[:20], subaccount_nonce)
+        return await self.execute_contract_msg(private_key=private_key, msg=msg)
+
+    async def cancel_all_intents(
+        self,
+        private_key: str,
+    ) -> str:
+        """Cancel ALL active conditional orders for a taker across every market.
+
+        Calls ``CancelAllIntents {}`` on the RFQ contract. The contract increments
+        the taker's epoch. The indexer then cancels every conditional order for this
+        taker that was signed with the previous epoch.
+
+        Use this for a full reset — all pending TP/SL orders on all markets are
+        cancelled in one transaction.
+
+        Args:
+            private_key: Taker's private key.
+
+        Returns:
+            Transaction hash.
+        """
+        msg = {"cancel_all_intents": {}}
+        logger.info("CancelAllIntents")
+        return await self.execute_contract_msg(private_key=private_key, msg=msg)
+
+    async def execute_contract_msg(
+        self,
+        private_key: str,
+        msg: dict,
+    ) -> str:
+        """Execute an arbitrary contract message and return the transaction hash.
+
+        Waits for on-chain confirmation and raises ContractExecutionError on failure.
+
+        Args:
+            private_key: Sender's private key (hex, with or without 0x prefix)
+            msg: Contract execute message as a dict (e.g. {"cancel_all_intents": {}})
+
+        Returns:
+            Transaction hash string.
+        """
+        from pyinjective.composer_v2 import Composer
+        from pyinjective.core.broadcaster import MsgBroadcasterWithPk
+
+        network = await self._get_network()
+        sender_address = _get_sender_address(private_key)
+
+        try:
+            broadcaster = MsgBroadcasterWithPk.new_using_gas_heuristics(
+                network=network,
+                private_key=private_key,
+            )
+
+            composer = Composer(network=network.string())
+            execute_msg = composer.msg_execute_contract(
+                sender=sender_address,
+                contract=self.contract_address,
+                msg=json.dumps(msg),
+            )
+
+            result = await broadcaster.broadcast([execute_msg])
+
+            tx_response = None
+            if isinstance(result, dict):
+                tx_response = result.get("txResponse", result)
+            elif hasattr(result, "txResponse"):
+                tx_response = result.txResponse
+            else:
+                tx_response = result
+
+            tx_hash = None
+            if isinstance(tx_response, dict):
+                tx_hash = tx_response.get("txhash") or tx_response.get("txHash")
+            else:
+                tx_hash = getattr(tx_response, "txhash", None) or getattr(tx_response, "txHash", None)
+
+            if not tx_hash:
+                raise ContractExecutionError(
+                    f"Failed to get transaction hash from broadcast result: {result}"
+                )
+
+            tx_result = await self._wait_for_tx_result(tx_hash, timeout=30.0)
+            code = tx_result.get("code", 0)
+            raw_log = tx_result.get("rawLog", "")
+
+            if code and code != 0:
+                error_msg = raw_log or f"Transaction failed with code {code}"
+                error_lower = error_msg.lower()
+                if "unauthorized" in error_lower:
+                    raise ContractUnauthorizedError(error_msg)
+                raise ContractExecutionError(error_msg)
+
+            logger.info("Contract tx SUCCESS: %s", tx_hash)
+            return tx_hash
+
+        except (ContractUnauthorizedError, ContractValidationError, ContractExecutionError):
+            raise
+        except Exception as e:
+            error_msg = str(e).lower()
+            if "unauthorized" in error_msg:
+                raise ContractUnauthorizedError(str(e)) from e
+            raise ContractExecutionError(str(e)) from e

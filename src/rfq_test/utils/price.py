@@ -1,14 +1,29 @@
-"""Price fetching utilities for multi-market testing.
+"""Price fetching and tick-size quantization utilities.
 
 Supports:
 - Static prices from config (for local testing)
 - Oracle prices from Injective chain (for testnet)
+- Price quantization to market tick sizes (required before signing)
+
+CRITICAL — Tick Size Rule
+--------------------------
+Every price and quantity you use in a quote or conditional order MUST be
+quantized to the market's tick sizes before you sign it. The signed value
+and the value sent to the contract/indexer must be byte-for-byte identical,
+so quantize first, then sign, then send.
+
+  Wrong order:   compute price → sign → quantize → send   (sig mismatch!)
+  Correct order: compute price → quantize → sign → send
+
+If you skip this, the exchange will reject the synthetic trade with an error
+like "invalid price tick" even though the RFQ contract accepted the signature.
+
+See quantize_to_tick() and quantize_for_fpdecimal() below.
 """
 
-import asyncio
 import logging
-from decimal import Decimal
-from typing import Optional
+from decimal import Decimal, ROUND_HALF_UP, ROUND_FLOOR, ROUND_CEILING
+from typing import Optional, Union
 
 import httpx
 
@@ -16,15 +31,155 @@ from rfq_test.models.config import MarketConfig, EnvironmentConfig
 
 logger = logging.getLogger(__name__)
 
+# The RFQ contract uses FPDecimal which rejects values with more than 18
+# fractional digits. Oracle mark prices can have many digits; always quantize
+# computed prices before signing.
+_FPDECIMAL_MAX_FRAC_DIGITS = 18
+_FPDECIMAL_QUANTIZER = Decimal(10) ** -_FPDECIMAL_MAX_FRAC_DIGITS
+
+
+def quantize_for_fpdecimal(value: Union[Decimal, str, int, float]) -> str:
+    """Quantize a value to at most 18 fractional digits for FPDecimal compatibility.
+
+    The RFQ contract uses FPDecimal which rejects values with more than 18
+    fractional digits. Oracle mark prices and computed spread prices can have
+    many digits; this ensures they are valid before signing/sending.
+
+    Use quantize_to_tick() instead when you know the market's min_price_tick_size,
+    as that is the stricter (and more correct) constraint.
+
+    Args:
+        value: Price, worst_price, quantity, margin, etc.
+
+    Returns:
+        String suitable for the signed payload and contract messages.
+    """
+    d = Decimal(str(value)) if not isinstance(value, Decimal) else value
+    quantized = d.quantize(_FPDECIMAL_QUANTIZER, rounding=ROUND_HALF_UP)
+    normalized = quantized.normalize()
+    return format(normalized, "f")
+
+
+def quantize_to_tick(
+    value: Union[Decimal, str, int, float],
+    tick_size: Optional[Decimal] = None,
+    rounding: str = ROUND_HALF_UP,
+) -> str:
+    """Quantize a price to the market's min_price_tick_size.
+
+    The Injective exchange rejects synthetic trade prices that are not exact
+    multiples of the market's min_price_tick_size. This function must be
+    called on every price BEFORE signing the quote — the signed price and
+    the price in AcceptQuote must be identical.
+
+    Args:
+        value: Price to quantize.
+        tick_size: Market's min_price_tick_size (e.g. Decimal("0.001")).
+            Obtain this from get_market_tick_sizes() or your config YAML.
+            If None or zero, falls back to quantize_for_fpdecimal (18 digits).
+        rounding: Decimal rounding mode.
+            For MM quote prices:
+              - LONG direction (taker buys): use ROUND_FLOOR so MM's price ≤ taker's worst_price
+              - SHORT direction (taker sells): use ROUND_CEILING so MM's price ≥ taker's worst_price
+            For conditional order worst_price (taker perspective):
+              - SHORT direction: use ROUND_FLOOR (lower floor → MM has more room → more fills)
+              - LONG direction: use ROUND_CEILING (higher cap → MM has more room → more fills)
+            Default ROUND_HALF_UP is safe when using a generous band (e.g. ±5% from mark).
+
+    Returns:
+        String aligned to the market's price tick, ready for signing.
+
+    Example:
+        >>> quantize_to_tick("4.16789", Decimal("0.001"))
+        "4.168"
+        >>> # For a short worst_price (conservative — round down):
+        >>> from decimal import ROUND_FLOOR
+        >>> quantize_to_tick("4.16789", Decimal("0.001"), rounding=ROUND_FLOOR)
+        "4.167"
+    """
+    d = Decimal(str(value)) if not isinstance(value, Decimal) else value
+    if tick_size and tick_size > 0:
+        quantized = (d / tick_size).to_integral_value(rounding=rounding) * tick_size
+        return format(quantized.normalize(), "f")
+    return quantize_for_fpdecimal(d)
+
+
+def quantize_quantity(
+    value: Union[Decimal, str, int, float],
+    min_qty_tick: Optional[Decimal] = None,
+) -> str:
+    """Quantize a quantity to the market's min_quantity_tick_size.
+
+    Quantities that are not multiples of min_quantity_tick_size are rejected
+    by the exchange. Always floor-round quantities (never round up — that
+    would exceed the taker's requested amount).
+
+    Args:
+        value: Quantity to quantize.
+        min_qty_tick: Market's min_quantity_tick_size.
+            If None, falls back to quantize_for_fpdecimal.
+
+    Returns:
+        String aligned to the market's quantity tick.
+    """
+    return quantize_to_tick(value, min_qty_tick, rounding=ROUND_FLOOR)
+
+
+async def get_market_tick_sizes(
+    lcd_endpoint: str,
+    market_id: str,
+) -> dict:
+    """Fetch min_price_tick_size and min_quantity_tick_size for a market from the chain.
+
+    Args:
+        lcd_endpoint: Chain LCD URL (e.g. "https://testnet.sentry.lcd.injective.network")
+        market_id: Derivative market ID (0x hex string)
+
+    Returns:
+        Dict with keys "min_price_tick" and "min_qty_tick" (Decimal values),
+        or an empty dict if the fetch fails.
+
+    Example:
+        ticks = await get_market_tick_sizes(lcd_url, market_id)
+        price_tick = ticks.get("min_price_tick")
+        qty_tick   = ticks.get("min_qty_tick")
+        quote_price = quantize_to_tick(raw_price, price_tick)
+        quantity    = quantize_quantity(raw_qty, qty_tick)
+        # Now sign quote_price and quantity — they are tick-aligned
+    """
+    url = f"{lcd_endpoint.rstrip('/')}/injective/exchange/v2/derivative/markets/{market_id}"
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            resp = await client.get(url)
+            if resp.status_code == 200:
+                data = resp.json()
+                inner = (data.get("market") or {}).get("market") or {}
+                result = {}
+                tick_str = inner.get("min_price_tick_size")
+                qty_str = inner.get("min_quantity_tick_size")
+                if tick_str:
+                    result["min_price_tick"] = Decimal(tick_str)
+                if qty_str:
+                    result["min_qty_tick"] = Decimal(qty_str)
+                return result
+    except Exception as e:
+        logger.warning("Failed to fetch tick sizes for %s: %s", market_id[:20], e)
+    return {}
+
 
 class PriceFetcher:
-    """Fetches market prices from various sources."""
-    
+    """Fetches market prices and tick sizes from the chain or static config.
+
+    After the first oracle price fetch for a market, tick sizes are cached for
+    the session lifetime (they don't change during a run).
+    """
+
     def __init__(self, config: EnvironmentConfig):
         self.config = config
         self._cache: dict[str, Decimal] = {}
         self._cache_ttl_seconds: float = 60.0
         self._last_fetch: dict[str, float] = {}
+        self._market_info: dict[str, dict] = {}  # session cache for tick sizes
     
     async def get_price(self, market: MarketConfig) -> Decimal:
         """Get current price for a market.
@@ -87,17 +242,38 @@ class PriceFetcher:
         
         return price
     
+    def get_price_tick(self, market: MarketConfig) -> Optional[Decimal]:
+        """Return the cached min_price_tick_size for a market.
+
+        Priority: session cache (from chain) → YAML config → None.
+        Call get_price() at least once before this so the chain value is cached.
+        Returns None when unknown so callers can fall back to quantize_for_fpdecimal.
+        """
+        cached = self._market_info.get(market.id, {})
+        if "min_price_tick" in cached:
+            return cached["min_price_tick"]
+        if market.min_price_tick is not None:
+            return market.min_price_tick
+        return None
+
+    def get_qty_tick(self, market: MarketConfig) -> Optional[Decimal]:
+        """Return the cached min_quantity_tick_size for a market.
+
+        Same priority as get_price_tick. Returns None when unknown.
+        """
+        return self._market_info.get(market.id, {}).get("min_qty_tick")
+
     async def _fetch_oracle_price(self, market: MarketConfig) -> Decimal:
-        """Fetch price from Injective LCD.
-        
+        """Fetch price from Injective LCD, caching tick sizes as a side-effect.
+
         Tries in order:
         1. Exchange v2 derivative market (mark_price, human-readable) – preferred.
+           Also caches min_price_tick_size and min_quantity_tick_size.
         2. Exchange v1beta1 derivative market (markPrice/oraclePrice, may be scaled).
         3. Oracle price by base/quote.
-        Uses market.id so any configured market_id is supported.
         """
         lcd_url = self.config.chain.lcd_endpoint.rstrip("/")
-        
+
         try:
             async with httpx.AsyncClient() as client:
                 # 1) Prefer v2 derivative market endpoint (returns mark_price at top level)
@@ -107,14 +283,24 @@ class PriceFetcher:
                 )
                 if response.status_code == 200:
                     data = response.json()
+                    # Cache tick sizes from this response (session lifetime)
+                    inner = (data.get("market") or {}).get("market") or {}
+                    tick_info = {}
+                    if inner.get("min_price_tick_size"):
+                        tick_info["min_price_tick"] = Decimal(inner["min_price_tick_size"])
+                    if inner.get("min_quantity_tick_size"):
+                        tick_info["min_qty_tick"] = Decimal(inner["min_quantity_tick_size"])
+                    if tick_info:
+                        self._market_info[market.id] = tick_info
+
                     # v2: top-level mark_price is human-readable; some proxies nest under "market"
                     mark_price = data.get("mark_price") or (data.get("market") or {}).get("mark_price")
                     if mark_price is not None:
                         return Decimal(str(mark_price))
                     # v2 inner market object (camelCase from proto)
                     market_data = data.get("market", {}) or {}
-                    inner = market_data.get("market", market_data)
-                    mark_price = inner.get("markPrice") or inner.get("mark_price") or inner.get("oraclePrice")
+                    inner_market = market_data.get("market", market_data)
+                    mark_price = inner_market.get("markPrice") or inner_market.get("mark_price") or inner_market.get("oraclePrice")
                     if mark_price is not None:
                         return Decimal(str(mark_price))
                 

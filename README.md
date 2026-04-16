@@ -20,8 +20,16 @@ src/rfq_test/          # Core library
 
 configs/               # Environment configs (testnet, local)
 scripts/               # Setup scripts (authz grants, maker registration, funding)
+                       # conditional_order_example.py — TP/SL order lifecycle example
 examples/              # Standalone test scripts
 ```
+
+### Key Features
+
+- **RFQ quoting:** MakerStream WebSocket for receiving requests and sending quotes
+- **Conditional orders (TP/SL):** TakerStream WebSocket + REST API for trigger-based orders that execute automatically when mark price crosses a threshold
+- **On-chain settlement:** AcceptQuote, CancelIntentLane, CancelAllIntents
+- **Quote signing:** keccak256 + secp256k1 with the exact field order required by the contract
 
 ## Regenerating Proto Code
 
@@ -145,6 +153,14 @@ mm_client = MakerStreamClient(
     subscribe_to_settlement_updates=True,
 )
 ```
+
+> **Quote signing note:** The signed JSON payload includes a required `"ms"` field (maker_subaccount_nonce) between `"m"` and `"mq"`. See [PYTHON_BUILDING_GUIDE.md](PYTHON_BUILDING_GUIDE.md#quote-signing) for the full field order.
+
+### Conditional Orders (TP/SL)
+
+Takers can submit trigger-based orders via the TakerStream WebSocket (`message_type: "conditional_order"`) or via the REST API (`POST /conditionalOrder`). The indexer monitors mark prices and executes the order automatically when the trigger price is crossed.
+
+See [PYTHON_BUILDING_GUIDE.md — Conditional Orders](PYTHON_BUILDING_GUIDE.md#conditional-orders-tpsl) and `scripts/conditional_order_example.py` for a complete example.
 
 ### Supported Markets (Testnet)
 

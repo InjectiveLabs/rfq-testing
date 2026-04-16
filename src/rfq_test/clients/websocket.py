@@ -32,6 +32,12 @@ from rfq_test.proto.injective_rfq_rpc_pb2 import (
     TakerStreamStreamingRequest,
     TakerStreamResponse,
 )
+# ConditionalOrderInput and TakerStreamRequest (with conditional_order field) are
+# only in the hand-written proto module — the generated proto does not include them yet.
+from rfq_test.proto.rfq_messages import (
+    ConditionalOrderInput,
+    TakerStreamRequest as TakerStreamConditionalRequest,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -331,6 +337,12 @@ class TakerStreamClient(BaseStreamClient):
                     logger.debug(f"Request ACK: RFQ#{ack.rfq_id} status={ack.status}")
                     await self._message_queue.put(("request_ack", ack))
                 
+                elif msg_type == "conditional_order_ack":
+                    ack = response.conditional_order_ack
+                    rfq_id = ack.order.rfq_id if ack and ack.order else 0
+                    logger.info(f"Conditional order ACK: RFQ#{rfq_id}")
+                    await self._message_queue.put(("conditional_order_ack", ack))
+
                 elif msg_type == "error":
                     err = response.error
                     logger.error(f"Stream error: code={err.code} message={err.message_}")
@@ -348,6 +360,109 @@ class TakerStreamClient(BaseStreamClient):
                 if self._connected:
                     logger.error(f"Receive error: {e}")
                 break
+
+    async def send_conditional_order(
+        self,
+        order_body: dict,
+        signature: str,
+        wait_for_ack: bool = True,
+        response_timeout: float = 5.0,
+    ) -> Optional[dict]:
+        """Send a conditional order (TP/SL) via the TakerStream.
+
+        Args:
+            order_body: Dict with the conditional order fields — version, chain_id,
+                contract_address, taker, epoch, rfq_id, market_id, subaccount_nonce,
+                lane_version, deadline_ms, direction, quantity, margin, worst_price,
+                min_total_fill_quantity, trigger_type, trigger_price, unfilled_action,
+                cid, allowed_relayer.
+            signature: Hex-encoded secp256k1 signature from sign_conditional_order()
+                (with or without 0x prefix — 0x is added automatically).
+            wait_for_ack: If True, block until conditional_order_ack or error arrives.
+            response_timeout: Seconds to wait for ack (default 5.0).
+
+        Returns:
+            Dict with rfq_id and status if wait_for_ack=True, else None.
+
+        Raises:
+            IndexerValidationError: If the server returns a stream error.
+            IndexerTimeoutError: If no ack is received within response_timeout.
+        """
+        def _str(v) -> str:
+            return "" if v is None else str(v)
+
+        co = ConditionalOrderInput(
+            version=int(order_body.get("version", 1)),
+            chain_id=_str(order_body.get("chain_id")),
+            contract_address=_str(order_body.get("contract_address")),
+            taker=_str(order_body.get("taker")),
+            epoch=int(order_body.get("epoch", 1)),
+            rfq_id=int(order_body.get("rfq_id", 0)),
+            market_id=_str(order_body.get("market_id")),
+            subaccount_nonce=int(order_body.get("subaccount_nonce", 0)),
+            lane_version=int(order_body.get("lane_version", 1)),
+            deadline_ms=int(order_body.get("deadline_ms", 0)),
+            direction=_str(order_body.get("direction")),
+            quantity=_str(order_body.get("quantity")),
+            margin=_str(order_body.get("margin") or "0"),
+            worst_price=_str(order_body.get("worst_price")),
+            min_total_fill_quantity=_str(order_body.get("min_total_fill_quantity")),
+            trigger_type=_str(order_body.get("trigger_type")),
+            trigger_price=_str(order_body.get("trigger_price")),
+            unfilled_action=_str(order_body.get("unfilled_action")),
+            cid=_str(order_body.get("cid")),
+            allowed_relayer=_str(order_body.get("allowed_relayer")),
+        )
+
+        sig = signature if signature.startswith("0x") else ("0x" + signature)
+        # TakerStreamConditionalRequest is the hand-written proto that supports
+        # the conditional_order field (not yet in the generated injective_rfq_rpc_pb2).
+        msg = TakerStreamConditionalRequest(
+            message_type="conditional_order",
+            conditional_order=co,
+            conditional_order_signature=sig,
+        )
+        logger.info(
+            "Sending conditional_order: market=%s dir=%s trigger_type=%s trigger_price=%s",
+            co.market_id[:20], co.direction, co.trigger_type, co.trigger_price,
+        )
+        await self._send_raw(encode_grpc_message(msg))
+
+        if not wait_for_ack:
+            return None
+        return await self._wait_for_conditional_order_ack(response_timeout)
+
+    async def _wait_for_conditional_order_ack(self, timeout: float) -> dict:
+        """Wait for conditional_order_ack or error after sending a conditional order."""
+        start = time.monotonic()
+        while (time.monotonic() - start) < timeout:
+            try:
+                remaining = timeout - (time.monotonic() - start)
+                msg_type, data = await asyncio.wait_for(
+                    self._message_queue.get(),
+                    timeout=remaining,
+                )
+
+                if msg_type == "conditional_order_ack":
+                    order = data.order
+                    rfq_id = order.rfq_id if order else 0
+                    status = order.status if order else ""
+                    logger.info(f"Conditional order ACK: RFQ#{rfq_id} status={status}")
+                    return {"rfq_id": rfq_id, "status": status, "order": order}
+
+                if msg_type == "error":
+                    error_msg = f"{data.code}: {data.message_}"
+                    logger.warning(f"Conditional order error: {error_msg}")
+                    raise IndexerValidationError(error_msg)
+
+                await self._message_queue.put((msg_type, data))
+                await asyncio.sleep(0.01)
+
+            except asyncio.TimeoutError:
+                break
+
+        raise IndexerTimeoutError(f"No conditional_order_ack within {timeout}s")
+
 
     async def send_request(self, request_data: dict, wait_for_response: bool = False, response_timeout: float = 2.0) -> Optional[dict]:
         """Send an RFQ request.
@@ -745,9 +860,7 @@ class MakerStreamClient(BaseStreamClient):
         if min_fill_quantity is not None:
             quote_kwargs["min_fill_quantity"] = str(min_fill_quantity)
 
-        quote = RFQQuoteType(
-            **quote_kwargs,
-        )
+        quote = RFQQuoteType(**quote_kwargs)
 
         msg = MakerStreamStreamingRequest(message_type="quote", quote=quote)
         
@@ -792,31 +905,65 @@ class MakerStreamClient(BaseStreamClient):
         logger.warning(f"No response received for quote on RFQ#{rfq_id} within {timeout}s (no ACK, no error)")
         return {"type": "no_response", "rfq_id": rfq_id}
     
-    async def wait_for_request(self, timeout: float = 30.0, client_id: str = None) -> dict:
-        """Wait for an RFQ request, optionally filtering by client_id.
-        
+    async def wait_for_request(
+        self,
+        timeout: float = 30.0,
+        client_id: str = None,
+        market_id: str = None,
+        direction: str = None,
+    ) -> dict:
+        """Wait for an RFQ request, optionally filtering by client_id, market_id, and/or direction.
+
         Args:
-            timeout: Maximum wait time
+            timeout: Maximum wait time in seconds
             client_id: If set, skip requests whose client_id doesn't match.
-            
+            market_id: If set, skip requests for a different market.
+            direction: If set, skip requests with a different direction
+                (e.g. "short" or "long"). Compared case-insensitively.
+
         Returns:
             Request data as dict
         """
         start = time.monotonic()
+        skipped = 0
         while (time.monotonic() - start) < timeout:
             try:
                 msg_type, data = await asyncio.wait_for(
                     self._message_queue.get(),
                     timeout=timeout - (time.monotonic() - start),
                 )
-                
+
                 if msg_type == "request":
                     req = self._request_to_dict(data)
-                    if client_id and req.get("client_id") != client_id:
-                        logger.debug(f"Skipping request with client_id={req.get('client_id')} (waiting for {client_id})")
+
+                    if market_id and req.get("market_id") != market_id:
+                        skipped += 1
+                        logger.debug(
+                            "Skipping request RFQ#%s: market_id mismatch (skipped %d)",
+                            req.get("rfq_id", "?"), skipped,
+                        )
                         continue
+
+                    if client_id and req.get("client_id") != client_id:
+                        skipped += 1
+                        logger.debug(
+                            "Skipping request RFQ#%s: client_id mismatch (skipped %d)",
+                            req.get("rfq_id", "?"), skipped,
+                        )
+                        continue
+
+                    if direction:
+                        req_dir = str(req.get("direction", "")).lower()
+                        if req_dir != direction.lower():
+                            skipped += 1
+                            logger.debug(
+                                "Skipping request RFQ#%s: direction=%s, want %s (skipped %d)",
+                                req.get("rfq_id", "?"), req_dir, direction.lower(), skipped,
+                            )
+                            continue
+
                     return req
-                
+
                 if msg_type == "error":
                     raise IndexerValidationError(f"{data.code}: {data.message_}")
 
