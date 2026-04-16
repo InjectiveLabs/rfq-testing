@@ -21,12 +21,15 @@ from rfq_test.exceptions import (
     IndexerTimeoutError,
     IndexerValidationError,
 )
-from rfq_test.proto.rfq_messages import (
+from rfq_test.proto.injective_rfq_rpc_pb2 import (
     CreateRFQRequestType,
-    MakerStreamRequest,
+    MakerStreamStreamingRequest,
     MakerStreamResponse,
+    RFQExpiryType,
+    RFQProcessedQuoteType,
     RFQQuoteType,
-    TakerStreamRequest,
+    RFQSettlementMakerUpdate,
+    TakerStreamStreamingRequest,
     TakerStreamResponse,
 )
 
@@ -55,7 +58,7 @@ def encode_grpc_message(message) -> bytes:
     
     Format: [1 byte compression flag][4 bytes length BE][protobuf payload]
     """
-    payload = message.encode()
+    payload = message.SerializeToString()
     header = struct.pack(">BI", 0, len(payload))
     return header + payload
 
@@ -78,7 +81,7 @@ def decode_grpc_message(data: bytes, message_type):
     length = struct.unpack(">I", data[1:5])[0]
     payload = data[5:5 + length]
     
-    return message_type.decode(payload)
+    return message_type.FromString(payload)
 
 
 class BaseStreamClient(ABC):
@@ -114,6 +117,10 @@ class BaseStreamClient(ABC):
     def url(self) -> str:
         """Full WebSocket URL."""
         return f"{self.base_url}{self.stream_path}"
+
+    def _additional_headers(self) -> Optional[dict[str, str]]:
+        """Optional WebSocket handshake headers for stream metadata."""
+        return None
     
     async def connect(self) -> None:
         """Connect to the WebSocket stream."""
@@ -129,6 +136,7 @@ class BaseStreamClient(ABC):
                     self.url,
                     subprotocols=[GRPC_WS_SUBPROTOCOL],
                     ssl=ssl_context,
+                    additional_headers=self._additional_headers(),
                 ),
                 timeout=self.timeout,
             )
@@ -283,41 +291,15 @@ class TakerStreamClient(BaseStreamClient):
     def stream_path(self) -> str:
         return "/TakerStream"
 
-    async def connect(self) -> None:
-        """Connect to TakerStream; send request_address as metadata if set."""
-        try:
-            logger.info(f"Connecting to {self.url}")
-            ssl_context = None
-            if self.url.startswith("wss://"):
-                ssl_context = ssl.create_default_context(cafile=certifi.where())
-            additional_headers: dict[str, str] = {}
-            if self._request_address:
-                additional_headers["request_address"] = self._request_address
-            self._ws = await asyncio.wait_for(
-                websockets.connect(
-                    self.url,
-                    subprotocols=[GRPC_WS_SUBPROTOCOL],
-                    ssl=ssl_context,
-                    additional_headers=additional_headers or None,
-                ),
-                timeout=self.timeout,
-            )
-            self._connected = True
-            self._receive_task = asyncio.create_task(self._receive_loop())
-            self._ping_task = asyncio.create_task(self._ping_loop())
-            try:
-                await self._send_ping()
-            except Exception as e:
-                logger.warning(f"Initial ping failed: {e}")
-            logger.info(f"Connected to {self.url}")
-        except asyncio.TimeoutError as e:
-            raise IndexerConnectionError(f"Connection timeout: {self.url}") from e
-        except Exception as e:
-            raise IndexerConnectionError(f"Failed to connect: {e}") from e
+    def _additional_headers(self) -> Optional[dict[str, str]]:
+        """gRPC-web metadata required to identify the taker stream."""
+        if not self._request_address:
+            return None
+        return {"request_address": self._request_address}
 
     async def _send_ping(self) -> None:
         """Send ping to keep connection alive."""
-        msg = TakerStreamRequest(message_type="ping")
+        msg = TakerStreamStreamingRequest(message_type="ping")
         await self._send_raw(encode_grpc_message(msg))
     
     async def _receive_loop(self) -> None:
@@ -351,12 +333,12 @@ class TakerStreamClient(BaseStreamClient):
                 
                 elif msg_type == "error":
                     err = response.error
-                    logger.error(f"Stream error: code={err.code} message={err.message}")
+                    logger.error(f"Stream error: code={err.code} message={err.message_}")
                     await self._message_queue.put(("error", err))
-                
+
                 else:
                     logger.warning(f"Unknown message type: {msg_type}")
-                    
+
             except websockets.ConnectionClosed as e:
                 logger.warning("WebSocket connection closed: %s", _format_connection_closed(e))
                 break
@@ -366,7 +348,7 @@ class TakerStreamClient(BaseStreamClient):
                 if self._connected:
                     logger.error(f"Receive error: {e}")
                 break
-    
+
     async def send_request(self, request_data: dict, wait_for_response: bool = False, response_timeout: float = 2.0) -> Optional[dict]:
         """Send an RFQ request.
         
@@ -386,6 +368,13 @@ class TakerStreamClient(BaseStreamClient):
             direction = str(direction)
         
         client_id = request_data.get("client_id") or str(uuid.uuid4())
+        expiry_raw = request_data.get("expiry")
+        if expiry_raw is None:
+            expiry_val = int(time.time() * 1000) + 300_000
+        elif isinstance(expiry_raw, dict):
+            expiry_val = int(expiry_raw.get("ts") or expiry_raw.get("timestamp") or 0)
+        else:
+            expiry_val = int(expiry_raw)
         request = CreateRFQRequestType(
             client_id=client_id,
             market_id=request_data.get("market_id", ""),
@@ -393,9 +382,9 @@ class TakerStreamClient(BaseStreamClient):
             margin=str(request_data.get("margin", "")),
             quantity=str(request_data.get("quantity", "")),
             worst_price=str(request_data.get("worst_price", "0")),
-            expiry=int(request_data.get("expiry", int(time.time() * 1000) + 300_000)),
+            expiry=expiry_val,
         )
-        msg = TakerStreamRequest(message_type="request", request=request)
+        msg = TakerStreamStreamingRequest(message_type="request", request=request)
         logger.info(f"Sending request: client_id={client_id} {request.direction} qty={request.quantity}")
         await self._send_raw(encode_grpc_message(msg))
         if wait_for_response:
@@ -435,7 +424,7 @@ class TakerStreamClient(BaseStreamClient):
                     return response
                 
                 if msg_type == "error":
-                    error_msg = f"{data.code}: {data.message}"
+                    error_msg = f"{data.code}: {data.message_}"
                     logger.warning(f"Request error received: {error_msg}")
                     raise IndexerValidationError(error_msg)
                 
@@ -470,14 +459,14 @@ class TakerStreamClient(BaseStreamClient):
                     return {"rfq_id": data.rfq_id, "status": data.status}
                 
                 if msg_type == "error":
-                    raise IndexerValidationError(f"{data.code}: {data.message}")
-                
+                    raise IndexerValidationError(f"{data.code}: {data.message_}")
+
                 await self._message_queue.put((msg_type, data))
                 await asyncio.sleep(0.01)
-                
+
             except asyncio.TimeoutError:
                 break
-        
+
         raise IndexerTimeoutError(f"No ACK for request {rfq_id} within {timeout}s")
     
     async def wait_for_quote(self, rfq_id: int, timeout: float = 10.0) -> dict:
@@ -569,6 +558,8 @@ class TakerStreamClient(BaseStreamClient):
     
     def _quote_to_dict(self, quote: RFQQuoteType) -> dict:
         """Convert quote protobuf to dict."""
+        expiry = quote.expiry
+        expiry_val = expiry.timestamp if expiry else 0
         return {
             "rfq_id": str(quote.rfq_id),
             "market_id": quote.market_id,
@@ -576,7 +567,7 @@ class TakerStreamClient(BaseStreamClient):
             "margin": quote.margin,
             "quantity": quote.quantity,
             "price": quote.price,
-            "expiry": quote.expiry,
+            "expiry": expiry_val,
             "maker": quote.maker,
             "taker": quote.taker,
             "signature": quote.signature,
@@ -594,14 +585,47 @@ class MakerStreamClient(BaseStreamClient):
             async for request in client.requests(timeout=60):
                 await client.send_quote(quote_data)
     """
+
+    def __init__(
+        self,
+        base_url: str,
+        maker_address: Optional[str] = None,
+        subscribe_to_quotes_updates: bool = False,
+        subscribe_to_settlement_updates: bool = False,
+        timeout: float = 10.0,
+    ):
+        """Initialize Maker stream client.
+
+        Args:
+            base_url: WebSocket base URL (without /MakerStream)
+            maker_address: Maker's Injective address sent as stream metadata
+            subscribe_to_quotes_updates: Request quote update events for this maker
+            subscribe_to_settlement_updates: Request settlement update events for this maker
+            timeout: Default timeout for operations
+        """
+        super().__init__(base_url, timeout=timeout)
+        self._maker_address = maker_address
+        self._subscribe_to_quotes_updates = subscribe_to_quotes_updates
+        self._subscribe_to_settlement_updates = subscribe_to_settlement_updates
     
     @property
     def stream_path(self) -> str:
         return "/MakerStream"
+
+    def _additional_headers(self) -> Optional[dict[str, str]]:
+        """gRPC-web metadata supported by the maker stream handshake."""
+        headers: dict[str, str] = {}
+        if self._maker_address:
+            headers["maker_address"] = self._maker_address
+        if self._subscribe_to_quotes_updates:
+            headers["subscribe_to_quotes_updates"] = "true"
+        if self._subscribe_to_settlement_updates:
+            headers["subscribe_to_settlement_updates"] = "true"
+        return headers or None
     
     async def _send_ping(self) -> None:
         """Send ping to keep connection alive."""
-        msg = MakerStreamRequest(message_type="ping")
+        msg = MakerStreamStreamingRequest(message_type="ping")
         await self._send_raw(encode_grpc_message(msg))
     
     async def _receive_loop(self) -> None:
@@ -632,10 +656,30 @@ class MakerStreamClient(BaseStreamClient):
                     ack = response.quote_ack
                     logger.debug(f"Quote ACK: RFQ#{ack.rfq_id} status={ack.status}")
                     await self._message_queue.put(("quote_ack", ack))
-                
+
+                elif msg_type == "quote_update":
+                    quote = response.processed_quote
+                    logger.info(
+                        "Received quote update: RFQ#%s status=%s maker=%s",
+                        quote.rfq_id,
+                        quote.status,
+                        quote.maker,
+                    )
+                    await self._message_queue.put(("quote_update", quote))
+
+                elif msg_type == "settlement_update":
+                    settlement = response.settlement
+                    logger.info(
+                        "Received settlement update: RFQ#%s taker=%s cid=%s",
+                        settlement.rfq_id,
+                        settlement.taker,
+                        settlement.cid,
+                    )
+                    await self._message_queue.put(("settlement_update", settlement))
+
                 elif msg_type == "error":
                     err = response.error
-                    logger.error(f"Stream error: code={err.code} message={err.message}")
+                    logger.error(f"Stream error: code={err.code} message={err.message_}")
                     await self._message_queue.put(("error", err))
                 
                 else:
@@ -679,24 +723,33 @@ class MakerStreamClient(BaseStreamClient):
         if signature and not signature.startswith("0x"):
             signature = "0x" + signature
 
+        expiry_ts = int(quote_data.get("expiry", 0))
+        min_fill_quantity = quote_data.get("min_fill_quantity")
+        quote_kwargs = {
+            "chain_id": quote_data.get("chain_id", ""),
+            "contract_address": quote_data.get("contract_address", ""),
+            "market_id": quote_data.get("market_id", ""),
+            "rfq_id": int(quote_data.get("rfq_id", 0)),
+            "taker_direction": taker_direction,
+            "margin": str(quote_data.get("margin", "")),
+            "quantity": str(quote_data.get("quantity", "")),
+            "price": str(quote_data.get("price", "")),
+            "expiry": RFQExpiryType(timestamp=expiry_ts),
+            "maker": quote_data.get("maker", ""),
+            "taker": quote_data.get("taker", ""),
+            "signature": signature,
+            "status": "pending",
+            "transaction_time": int(time.time() * 1000),
+            "maker_subaccount_nonce": int(quote_data.get("maker_subaccount_nonce", 0)),
+        }
+        if min_fill_quantity is not None:
+            quote_kwargs["min_fill_quantity"] = str(min_fill_quantity)
+
         quote = RFQQuoteType(
-            chain_id=quote_data.get("chain_id", ""),
-            contract_address=quote_data.get("contract_address", ""),
-            market_id=quote_data.get("market_id", ""),
-            rfq_id=int(quote_data.get("rfq_id", 0)),
-            taker_direction=taker_direction,
-            margin=str(quote_data.get("margin", "")),
-            quantity=str(quote_data.get("quantity", "")),
-            price=str(quote_data.get("price", "")),
-            expiry=int(quote_data.get("expiry", 0)),
-            maker=quote_data.get("maker", ""),
-            taker=quote_data.get("taker", ""),
-            signature=signature,
-            status="pending",
-            transaction_time=int(time.time() * 1000),
+            **quote_kwargs,
         )
-        
-        msg = MakerStreamRequest(message_type="quote", quote=quote)
+
+        msg = MakerStreamStreamingRequest(message_type="quote", quote=quote)
         
         logger.info(f"Sending quote: RFQ#{quote.rfq_id} price={quote.price}")
         await self._send_raw(encode_grpc_message(msg))
@@ -726,7 +779,7 @@ class MakerStreamClient(BaseStreamClient):
                     return response
                 
                 if msg_type == "error":
-                    error_msg = f"{data.code}: {data.message}"
+                    error_msg = f"{data.code}: {data.message_}"
                     logger.warning(f"Quote error received: {error_msg}")
                     raise IndexerValidationError(error_msg)
                 
@@ -765,14 +818,14 @@ class MakerStreamClient(BaseStreamClient):
                     return req
                 
                 if msg_type == "error":
-                    raise IndexerValidationError(f"{data.code}: {data.message}")
-                
+                    raise IndexerValidationError(f"{data.code}: {data.message_}")
+
                 await self._message_queue.put((msg_type, data))
                 await asyncio.sleep(0.01)
-                
+
             except asyncio.TimeoutError:
                 break
-        
+
         raise IndexerTimeoutError(f"No request within {timeout}s")
     
     async def requests(self, timeout: float = 60.0) -> AsyncIterator[dict]:
@@ -795,12 +848,65 @@ class MakerStreamClient(BaseStreamClient):
                 if msg_type == "request":
                     yield self._request_to_dict(data)
                 elif msg_type == "error":
-                    logger.error(f"Stream error: {data.code}: {data.message}")
+                    logger.error(f"Stream error: {data.code}: {data.message_}")
                 else:
                     await self._message_queue.put((msg_type, data))
                     
             except asyncio.TimeoutError:
                 continue
+
+    async def get_next_event(self, timeout: float = 1.0) -> Optional[tuple]:
+        """Get the next maker stream event. Returns None on timeout."""
+        try:
+            return await asyncio.wait_for(self._message_queue.get(), timeout=timeout)
+        except asyncio.TimeoutError:
+            return None
+
+    async def wait_for_quote_update(self, rfq_id: int, timeout: float = 30.0) -> dict:
+        """Wait for a processed quote update for a specific RFQ."""
+        start = time.monotonic()
+        while (time.monotonic() - start) < timeout:
+            try:
+                msg_type, data = await asyncio.wait_for(
+                    self._message_queue.get(),
+                    timeout=timeout - (time.monotonic() - start),
+                )
+
+                if msg_type == "quote_update" and data.rfq_id == rfq_id:
+                    return self._processed_quote_to_dict(data)
+
+                if msg_type == "error":
+                    raise IndexerValidationError(f"{data.code}: {data.message}")
+
+                await self._message_queue.put((msg_type, data))
+                await asyncio.sleep(0.01)
+            except asyncio.TimeoutError:
+                break
+
+        raise IndexerTimeoutError(f"No quote update for request {rfq_id} within {timeout}s")
+
+    async def wait_for_settlement_update(self, rfq_id: int, timeout: float = 30.0) -> dict:
+        """Wait for a settlement update for a specific RFQ."""
+        start = time.monotonic()
+        while (time.monotonic() - start) < timeout:
+            try:
+                msg_type, data = await asyncio.wait_for(
+                    self._message_queue.get(),
+                    timeout=timeout - (time.monotonic() - start),
+                )
+
+                if msg_type == "settlement_update" and data.rfq_id == rfq_id:
+                    return self._settlement_to_dict(data)
+
+                if msg_type == "error":
+                    raise IndexerValidationError(f"{data.code}: {data.message}")
+
+                await self._message_queue.put((msg_type, data))
+                await asyncio.sleep(0.01)
+            except asyncio.TimeoutError:
+                break
+
+        raise IndexerTimeoutError(f"No settlement update for request {rfq_id} within {timeout}s")
     
     def _request_to_dict(self, request) -> dict:
         """Convert request protobuf to dict."""
@@ -817,6 +923,86 @@ class MakerStreamClient(BaseStreamClient):
             "expiry": request.expiry,
             "status": request.status,
         }
+
+    def _processed_quote_to_dict(self, quote: RFQProcessedQuoteType) -> dict:
+        """Convert processed quote protobuf to dict."""
+        return {
+            "rfq_id": str(quote.rfq_id),
+            "chain_id": quote.chain_id,
+            "contract_address": quote.contract_address,
+            "market_id": quote.market_id,
+            "taker_direction": quote.taker_direction,
+            "margin": quote.margin,
+            "quantity": quote.quantity,
+            "price": quote.price,
+            "expiry": self._expiry_to_dict(quote.expiry),
+            "maker": quote.maker,
+            "taker": quote.taker,
+            "signature": quote.signature,
+            "status": quote.status,
+            "error": quote.error,
+            "executed_quantity": quote.executed_quantity,
+            "executed_margin": quote.executed_margin,
+            "created_at": quote.created_at,
+            "updated_at": quote.updated_at,
+            "height": quote.height,
+            "event_time": quote.event_time,
+            "transaction_time": quote.transaction_time,
+        }
+
+    def _settlement_to_dict(self, settlement: RFQSettlementMakerUpdate) -> dict:
+        """Convert settlement protobuf to dict."""
+        return {
+            "rfq_id": str(settlement.rfq_id),
+            "market_id": settlement.market_id,
+            "taker": settlement.taker,
+            "direction": settlement.direction,
+            "margin": settlement.margin,
+            "quantity": settlement.quantity,
+            "worst_price": settlement.worst_price,
+            "unfilled_action": self._unfilled_action_to_dict(settlement.unfilled_action),
+            "fallback_quantity": settlement.fallback_quantity,
+            "fallback_margin": settlement.fallback_margin,
+            "cid": settlement.cid,
+            "created_at": settlement.created_at,
+            "updated_at": settlement.updated_at,
+            "event_time": settlement.event_time,
+            "transaction_time": settlement.transaction_time,
+            "height": settlement.height,
+            "quotes": [
+                {
+                    "maker": q.maker,
+                    "price": q.price,
+                    "quoted_margin": q.quoted_margin,
+                    "quoted_quantity": q.quoted_quantity,
+                    "executed_margin": q.executed_margin,
+                    "executed_quantity": q.executed_quantity,
+                    "status": q.status,
+                }
+                for q in settlement.quotes
+            ],
+        }
+
+    def _expiry_to_dict(self, expiry) -> dict:
+        """Convert RFQExpiryType protobuf to dict."""
+        result = {}
+        timestamp = getattr(expiry, "timestamp", 0)
+        height = getattr(expiry, "height", 0)
+        if timestamp:
+            result["ts"] = timestamp
+        if height:
+            result["h"] = height
+        return result
+
+    def _unfilled_action_to_dict(self, unfilled_action) -> Optional[dict]:
+        """Convert settlement unfilled action protobuf to dict."""
+        if not unfilled_action:
+            return None
+        if getattr(unfilled_action, "limit", None):
+            return {"limit": {"price": unfilled_action.limit.price}}
+        if getattr(unfilled_action, "market", None):
+            return {"market": {}}
+        return None
 
 
 # Backwards compatibility alias

@@ -23,6 +23,22 @@ scripts/               # Setup scripts (authz grants, maker registration, fundin
 examples/              # Standalone test scripts
 ```
 
+## Regenerating Proto Code
+
+The Python protobuf bindings in `src/rfq_test/proto/` are generated from `injective_rfq_rpc.proto`. After updating the `.proto` file, regenerate them using the venv:
+
+```bash
+.venv/bin/python -m grpc_tools.protoc \
+  -I src/rfq_test/proto \
+  --python_out=src/rfq_test/proto \
+  --grpc_python_out=src/rfq_test/proto \
+  src/rfq_test/proto/injective_rfq_rpc.proto
+```
+
+This overwrites `injective_rfq_rpc_pb2.py` and `injective_rfq_rpc_pb2_grpc.py`. After regenerating, review any field or type changes in the proto and update `src/rfq_test/clients/websocket.py` accordingly (especially message type names, field types for `expiry`, and nested message structures).
+
+`grpcio-tools` is a dev dependency. Make sure it's installed in your venv (`pip install -e ".[dev]"`) before running the command.
+
 ## Quick Start
 
 ### 1. Install
@@ -83,7 +99,7 @@ python examples/test_settlement.py
 | Item | Value |
 |------|-------|
 | Chain ID | `injective-888` |
-| RFQ Contract | `inj1t8hyyle68vd0kzsdehxg0sywttrwmt58jzk29q` |
+| RFQ Contract | `inj1vtswdey9c70n475q7q75wgmkfdw8xw4rcfeqa4` |
 | MakerStream WSS | `wss://testnet.rfq.ws.injective.network/injective_rfq_rpc.InjectiveRfqRPC/MakerStream` |
 | TakerStream WSS | `wss://testnet.rfq.ws.injective.network/injective_rfq_rpc.InjectiveRfqRPC/TakerStream` |
 | Chain gRPC | `testnet-grpc.injective.dev:443` |
@@ -97,6 +113,38 @@ The RFQ Indexer uses **gRPC-web over WebSocket** with protobuf framing:
 - **Framing:** `[1 byte flags][4 bytes length BE][protobuf payload]`
 - **Keep-alive:** Send `ping` message every 1 second
 - **Signing:** `keccak256(canonical_json) → secp256k1_sign` (raw hash, NO EIP-191 prefix)
+
+### Maker Update Subscriptions
+
+When a maker connects to `MakerStream`, it can set these WebSocket headers:
+
+- `maker_address`: maker's Injective bech32 address
+- `subscribe_to_quotes_updates: true`
+- `subscribe_to_settlement_updates: true`
+
+These subscriptions are maker-scoped:
+
+- **Quote updates:** the maker receives `quote_update` events for quotes whose `maker` matches `maker_address`.
+- **Settlement updates:** the maker receives `settlement_update` events when a settlement includes at least one quote from `maker_address`, even if that quote was not the one used for execution.
+
+For quote updates:
+
+- `status="accepted"` means that quote was used in settlement.
+- `status="rejected"` means the quote was included in evaluation but not used.
+- `executed_quantity` and `executed_margin` contain the actually executed portion for that quote.
+
+Python client example:
+
+```python
+from rfq_test.clients.websocket import MakerStreamClient
+
+mm_client = MakerStreamClient(
+    ws_url,
+    maker_address=maker_inj_address,
+    subscribe_to_quotes_updates=True,
+    subscribe_to_settlement_updates=True,
+)
+```
 
 ### Supported Markets (Testnet)
 

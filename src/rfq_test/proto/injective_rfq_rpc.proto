@@ -13,392 +13,440 @@ option go_package = "/injective_rfq_rpcpb";
 
 // InjectiveRfqRPC defines gRPC API of the RFQ (Request for Quote) API.
 service InjectiveRfqRPC {
-	// Create RFQ request
-	rpc Request (RequestRequest) returns (RequestResponse);
-	// Stream RFQ requests
-	rpc StreamRequest (StreamRequestRequest) returns (stream StreamRequestResponse);
-	// Create RFQ quote
-	rpc Quote (QuoteRequest) returns (QuoteResponse);
-	// Stream RFQ quotes
-	rpc StreamQuote (StreamQuoteRequest) returns (stream StreamQuoteResponse);
-	// Get open RFQ requests
-	rpc GetOpenRequests (GetOpenRequestsRequest) returns (GetOpenRequestsResponse);
-	// Get pending RFQ quotes
-	rpc GetPendingQuotes (GetPendingQuotesRequest) returns (GetPendingQuotesResponse);
-	// List RFQ settlements
-	rpc ListSettlement (ListSettlementRequest) returns (ListSettlementResponse);
-	// Stream RFQ settlements
-	rpc StreamSettlement (StreamSettlementRequest) returns (stream StreamSettlementResponse);
-	// Bidirectional stream for takers: send requests, receive quotes
-	rpc TakerStream (stream TakerStreamStreamingRequest) returns (stream TakerStreamResponse);
-	// Bidirectional stream for makers: receive requests, send quotes
-	rpc MakerStream (stream MakerStreamStreamingRequest) returns (stream MakerStreamResponse);
+  // Create RFQ request
+  rpc Request (RequestRequest) returns (RequestResponse);
+  // Stream RFQ requests
+  rpc StreamRequest (StreamRequestRequest) returns (stream StreamRequestResponse);
+  // Create RFQ quote
+  rpc Quote (QuoteRequest) returns (QuoteResponse);
+  // Stream RFQ quotes
+  rpc StreamQuote (StreamQuoteRequest) returns (stream StreamQuoteResponse);
+  // List RFQ settlements
+  rpc ListSettlement (ListSettlementRequest) returns (ListSettlementResponse);
+  // Stream RFQ settlements
+  rpc StreamSettlement (StreamSettlementRequest) returns (stream StreamSettlementResponse);
+  // Bidirectional stream for takers: send requests, receive quotes
+  rpc TakerStream (stream TakerStreamStreamingRequest) returns (stream TakerStreamResponse);
+  // Bidirectional stream for makers: receive requests, send quotes
+  rpc MakerStream (stream MakerStreamStreamingRequest) returns (stream MakerStreamResponse);
 }
 
 message RequestRequest {
-	// RFQ request to create
-	RFQRequestInputType request = 1;
+  // RFQ request to create
+  RFQRequestInputType request = 1;
 }
 // RFQ request
 message RFQRequestInputType {
-	// Client ID
-	string client_id = 1;
-	// Market ID
-	string market_id = 2;
-	// Direction (long/short)
-	string direction = 3;
-	// Margin amount
-	string margin = 4;
-	// Quantity
-	string quantity = 5;
-	// Worst acceptable price
-	string worst_price = 6;
-	// Requester address
-	string request_address = 7;
-	// Expiry timestamp in milliseconds
-	uint64 expiry = 8;
-	// Transaction time timestamp
-	uint64 transaction_time = 9;
+  // Client ID
+  string client_id = 1;
+  // Market ID
+  string market_id = 2;
+  // Direction (long/short)
+  string direction = 3;
+  // Margin amount
+  string margin = 4;
+  // Quantity
+  string quantity = 5;
+  // Worst acceptable price
+  string worst_price = 6;
+  // Requester address
+  string request_address = 7;
+  // Expiry timestamp in milliseconds
+  uint64 expiry = 8;
+  // Transaction time timestamp
+  uint64 transaction_time = 9;
 }
 
 message RequestResponse {
-	// Status of the operation
-	string status = 1;
-	// Client ID
-	string client_id = 2;
-	// Generated RFQ ID
-	uint64 rfq_id = 3;
+  // Status of the operation
+  string status = 1;
+  // Client ID
+  string client_id = 2;
+  // Generated RFQ ID
+  uint64 rfq_id = 3;
 }
 
 message StreamRequestRequest {
-	// Filter by market IDs
-	repeated string market_ids = 1;
+  // Filter by market IDs
+  repeated string market_ids = 1;
 }
 
 message StreamRequestResponse {
-	// RFQ request update
-	RFQRequestType request = 1;
-	// Operation type (insert, update, delete)
-	string stream_operation = 2;
+  // RFQ request update
+  RFQRequestType request = 1;
+  // Operation type (insert, update, delete)
+  string stream_operation = 2;
 }
 // RFQ request
 message RFQRequestType {
-	// Client ID
-	string client_id = 1;
-	// RFQ ID
-	uint64 rfq_id = 2;
-	// Market ID
-	string market_id = 3;
-	// Direction (long/short)
-	string direction = 4;
-	// Margin amount
-	string margin = 5;
-	// Quantity
-	string quantity = 6;
-	// Worst acceptable price
-	string worst_price = 7;
-	// Requester address
-	string request_address = 8;
-	// Expiry timestamp in milliseconds
-	uint64 expiry = 9;
-	// Status (open, cancelled, completed)
-	string status = 10;
-	// Creation timestamp
-	sint64 created_at = 11;
-	// Last update timestamp
-	sint64 updated_at = 12;
-	// Transaction time timestamp
-	uint64 transaction_time = 13;
-	// Block height
-	uint64 height = 14;
+  // Client ID
+  string client_id = 1;
+  // RFQ ID
+  uint64 rfq_id = 2;
+  // Market ID
+  string market_id = 3;
+  // Direction (long/short)
+  string direction = 4;
+  // Margin amount
+  string margin = 5;
+  // Quantity
+  string quantity = 6;
+  // Worst acceptable price
+  string worst_price = 7;
+  // Requester address
+  string request_address = 8;
+  // Expiry timestamp in milliseconds
+  uint64 expiry = 9;
+  // Status (open, cancelled, completed)
+  string status = 10;
+  // Creation timestamp
+  sint64 created_at = 11;
+  // Last update timestamp
+  sint64 updated_at = 12;
+  // Transaction time timestamp
+  uint64 transaction_time = 13;
+  // Block height
+  uint64 height = 14;
 }
 
 message QuoteRequest {
-	// RFQ quote to create
-	RFQQuoteType quote = 1;
+  // RFQ quote to create
+  RFQQuoteType quote = 1;
 }
 // RFQ quote
 message RFQQuoteType {
-	// Chain ID
-	string chain_id = 1;
-	// Contract address
-	string contract_address = 2;
-	// Market ID
-	string market_id = 3;
-	// RFQ ID
-	uint64 rfq_id = 4;
-	// Taker direction (long/short)
-	string taker_direction = 5;
-	// Margin amount
-	string margin = 6;
-	// Quantity
-	string quantity = 7;
-	// Price
-	string price = 8;
-	// Expiry timestamp and height
-	RFQExpiryType expiry = 9;
-	// Maker address
-	string maker = 10;
-	// Taker address
-	string taker = 11;
-	// Signature
-	string signature = 12;
-	// Status (pending, accepted, rejected, expired)
-	string status = 13;
-	// Creation timestamp
-	sint64 created_at = 14;
-	// Last update timestamp
-	sint64 updated_at = 15;
-	// Block height
-	uint64 height = 16;
-	// Event time timestamp
-	uint64 event_time = 17;
-	// Transaction time timestamp
-	uint64 transaction_time = 18;
+  // Chain ID
+  string chain_id = 1;
+  // Contract address
+  string contract_address = 2;
+  // Market ID
+  string market_id = 3;
+  // RFQ ID
+  uint64 rfq_id = 4;
+  // Taker direction (long/short)
+  string taker_direction = 5;
+  // Margin amount
+  string margin = 6;
+  // Quantity
+  string quantity = 7;
+  // Price
+  string price = 8;
+  // Expiry timestamp and height
+  RFQExpiryType expiry = 9;
+  // Maker address
+  string maker = 10;
+  // Taker address
+  string taker = 11;
+  // Signature
+  string signature = 12;
+  // Status (pending, accepted, rejected, expired)
+  string status = 13;
+  // Creation timestamp
+  sint64 created_at = 14;
+  // Last update timestamp
+  sint64 updated_at = 15;
+  // Block height
+  uint64 height = 16;
+  // Event time timestamp
+  uint64 event_time = 17;
+  // Transaction time timestamp
+  uint64 transaction_time = 18;
+  // Maker subaccount nonce used in quote signature
+  uint64 maker_subaccount_nonce = 19;
+  // Optional minimum fill quantity used in quote signature
+  string min_fill_quantity = 20;
 }
 // Expiry with timestamp and block height
 message RFQExpiryType {
-	// Expiry timestamp in milliseconds
-	uint64 timestamp = 1;
-	// Expiry block height
-	uint64 height = 2;
+  // Expiry timestamp in milliseconds
+  uint64 timestamp = 1;
+  // Expiry block height
+  uint64 height = 2;
 }
 
 message QuoteResponse {
-	// Status of the operation
-	string status = 1;
+  // Status of the operation
+  string status = 1;
 }
 
 message StreamQuoteRequest {
-	// Filter by addresses
-	repeated string addresses = 1;
-	// Filter by market IDs
-	repeated string market_ids = 2;
+  // Filter by addresses
+  repeated string addresses = 1;
+  // Filter by market IDs
+  repeated string market_ids = 2;
 }
 
 message StreamQuoteResponse {
-	// RFQ quote update
-	RFQProcessedQuoteType quote = 1;
-	// Operation type (insert, update, delete)
-	string stream_operation = 2;
+  // RFQ quote update
+  RFQProcessedQuoteType quote = 1;
+  // Operation type (insert, update, delete)
+  string stream_operation = 2;
 }
 // RFQ quote result streamed in real-time
 message RFQProcessedQuoteType {
-	// Error message if quote is rejected
-	string error = 50;
-	// Executed quantity for the quote, if successful
-	string executed_quantity = 51;
-	// Executed margin for the quote, if successful
-	string executed_margin = 52;
-	// Chain ID
-	string chain_id = 1;
-	// Contract address
-	string contract_address = 2;
-	// Market ID
-	string market_id = 3;
-	// RFQ ID
-	uint64 rfq_id = 4;
-	// Taker direction (long/short)
-	string taker_direction = 5;
-	// Margin amount
-	string margin = 6;
-	// Quantity
-	string quantity = 7;
-	// Price
-	string price = 8;
-	// Expiry timestamp and height
-	RFQExpiryType expiry = 9;
-	// Maker address
-	string maker = 10;
-	// Taker address
-	string taker = 11;
-	// Signature
-	string signature = 12;
-	// Status (pending, accepted, rejected, expired)
-	string status = 13;
-	// Creation timestamp
-	sint64 created_at = 14;
-	// Last update timestamp
-	sint64 updated_at = 15;
-	// Block height
-	uint64 height = 16;
-	// Event time timestamp
-	uint64 event_time = 17;
-	// Transaction time timestamp
-	uint64 transaction_time = 18;
-}
-
-message GetOpenRequestsRequest {
-}
-
-message GetOpenRequestsResponse {
-	// List of open requests
-	repeated RFQRequestType requests = 1;
-}
-
-message GetPendingQuotesRequest {
-}
-
-message GetPendingQuotesResponse {
-	// List of pending quotes
-	repeated RFQQuoteType quotes = 1;
+  // Error message if quote is rejected
+  string error = 50;
+  // Executed quantity for the quote, if successful
+  string executed_quantity = 51;
+  // Executed margin for the quote, if successful
+  string executed_margin = 52;
+  // Chain ID
+  string chain_id = 1;
+  // Contract address
+  string contract_address = 2;
+  // Market ID
+  string market_id = 3;
+  // RFQ ID
+  uint64 rfq_id = 4;
+  // Taker direction (long/short)
+  string taker_direction = 5;
+  // Margin amount
+  string margin = 6;
+  // Quantity
+  string quantity = 7;
+  // Price
+  string price = 8;
+  // Expiry timestamp and height
+  RFQExpiryType expiry = 9;
+  // Maker address
+  string maker = 10;
+  // Taker address
+  string taker = 11;
+  // Signature
+  string signature = 12;
+  // Status (pending, accepted, rejected, expired)
+  string status = 13;
+  // Creation timestamp
+  sint64 created_at = 14;
+  // Last update timestamp
+  sint64 updated_at = 15;
+  // Block height
+  uint64 height = 16;
+  // Event time timestamp
+  uint64 event_time = 17;
+  // Transaction time timestamp
+  uint64 transaction_time = 18;
+  // Maker subaccount nonce used in quote signature
+  uint64 maker_subaccount_nonce = 19;
+  // Optional minimum fill quantity used in quote signature
+  string min_fill_quantity = 20;
 }
 
 message ListSettlementRequest {
-	// Filter by taker addresses
-	repeated string addresses = 1;
-	// Number of records per page
-	sint32 per_page = 2;
-	// Pagination token
-	string token = 3;
+  // Filter by taker addresses
+  repeated string addresses = 1;
+  // Number of records per page
+  sint32 per_page = 2;
+  // Pagination token
+  string token = 3;
 }
 
 message ListSettlementResponse {
-	// List of RFQ settlements
-	repeated RFQSettlementType settlements = 1;
-	// Next tokens for pagination
-	repeated string next = 2;
+  // List of RFQ settlements
+  repeated RFQSettlementType settlements = 1;
+  // Next tokens for pagination
+  repeated string next = 2;
 }
 // RFQ settlement
 message RFQSettlementType {
-	// RFQ ID
-	uint64 rfq_id = 1;
-	// Market ID
-	string market_id = 2;
-	// Taker address
-	string taker = 3;
-	// Direction (long/short)
-	string direction = 4;
-	// Margin amount
-	string margin = 5;
-	// Quantity
-	string quantity = 6;
-	// Worst acceptable price
-	string worst_price = 7;
-	// Unfilled action details
-	RFQSettlementUnfilledActionType unfilled_action = 8;
-	// Fallback quantity
-	string fallback_quantity = 9;
-	// Fallback margin
-	string fallback_margin = 10;
-	// Transaction time timestamp
-	uint64 transaction_time = 11;
-	// Creation timestamp
-	sint64 created_at = 12;
-	// Last update timestamp
-	sint64 updated_at = 13;
-	// Event time timestamp
-	uint64 event_time = 14;
-	// Block height
-	uint64 height = 15;
-	// Settlement CID
-	string cid = 16;
+  // RFQ ID
+  uint64 rfq_id = 1;
+  // Market ID
+  string market_id = 2;
+  // Taker address
+  string taker = 3;
+  // Direction (long/short)
+  string direction = 4;
+  // Margin amount
+  string margin = 5;
+  // Quantity
+  string quantity = 6;
+  // Worst acceptable price
+  string worst_price = 7;
+  // Unfilled action details
+  RFQSettlementUnfilledActionType unfilled_action = 8;
+  // Fallback quantity
+  string fallback_quantity = 9;
+  // Fallback margin
+  string fallback_margin = 10;
+  // Transaction time timestamp
+  uint64 transaction_time = 11;
+  // Creation timestamp
+  sint64 created_at = 12;
+  // Last update timestamp
+  sint64 updated_at = 13;
+  // Event time timestamp
+  uint64 event_time = 14;
+  // Block height
+  uint64 height = 15;
+  // Settlement CID
+  string cid = 16;
 }
 // Action to take for unfilled quantity - only one field should be set
 message RFQSettlementUnfilledActionType {
-	// Limit order action
-	RFQSettlementLimitActionType limit = 1;
-	// Market order action
-	RFQSettlementMarketActionType market = 2;
+  // Limit order action
+  RFQSettlementLimitActionType limit = 1;
+  // Market order action
+  RFQSettlementMarketActionType market = 2;
 }
 // Limit order action for unfilled quantity
 message RFQSettlementLimitActionType {
-	// Limit price
-	string price = 1;
+  // Limit price
+  string price = 1;
 }
 // Market order action for unfilled quantity
 message RFQSettlementMarketActionType {
 }
 
 message StreamSettlementRequest {
-	// Filter by addresses
-	repeated string addresses = 1;
+  // Filter by addresses
+  repeated string addresses = 1;
 }
 
 message StreamSettlementResponse {
-	// RFQ settlement update
-	RFQSettlementType settlement = 1;
-	// Operation type (insert, update, delete)
-	string stream_operation = 2;
+  // RFQ settlement update
+  RFQSettlementType settlement = 1;
+  // Operation type (insert, update, delete)
+  string stream_operation = 2;
 }
 // Message sent by taker in bidirectional stream
 message TakerStreamStreamingRequest {
-	// Type: 'request', 'ping'
-	string message_type = 1;
-	// RFQ request to create
-	CreateRFQRequestType request = 2;
+  // Type: 'request', 'ping'
+  string message_type = 1;
+  // RFQ request to create
+  CreateRFQRequestType request = 2;
 }
 // RFQ request
 message CreateRFQRequestType {
-	// Client ID
-	string client_id = 1;
-	// Market ID
-	string market_id = 2;
-	// Direction (long/short)
-	string direction = 3;
-	// Margin amount
-	string margin = 4;
-	// Quantity
-	string quantity = 5;
-	// Worst acceptable price
-	string worst_price = 6;
-	// Expiry timestamp in milliseconds
-	uint64 expiry = 7;
+  // Client ID
+  string client_id = 1;
+  // Market ID
+  string market_id = 2;
+  // Direction (long/short)
+  string direction = 3;
+  // Margin amount
+  string margin = 4;
+  // Quantity
+  string quantity = 5;
+  // Worst acceptable price
+  string worst_price = 6;
+  // Expiry timestamp in milliseconds
+  uint64 expiry = 7;
 }
 
 message TakerStreamResponse {
-	// Type: 'quote', 'request_ack', 'error', 'pong'
-	string message_type = 1;
-	// Quote from market maker
-	RFQQuoteType quote = 2;
-	// Acknowledgment for request creation
-	RequestStreamAck request_ack = 3;
-	// Error message
-	StreamError error = 4;
+  // Type: 'quote', 'request_ack', 'error', 'pong'
+  string message_type = 1;
+  // Quote from market maker
+  RFQQuoteType quote = 2;
+  // Acknowledgment for request creation
+  RequestStreamAck request_ack = 3;
+  // Error message
+  StreamError error = 4;
 }
 // Acknowledgment for stream operations
 message RequestStreamAck {
-	// RFQ ID
-	uint64 rfq_id = 1;
-	// Client ID
-	string client_id = 2;
-	// Status of the operation
-	string status = 3;
+  // RFQ ID
+  uint64 rfq_id = 1;
+  // Client ID
+  string client_id = 2;
+  // Status of the operation
+  string status = 3;
 }
 // Error message in stream
 message StreamError {
-	// Error code
-	string code = 1;
-	// Error message
-	string message_ = 2;
+  // Error code
+  string code = 1;
+  // Error message
+  string message_ = 2;
 }
 // Message sent by maker in bidirectional stream
 message MakerStreamStreamingRequest {
-	// Type: 'quote', 'ping'
-	string message_type = 1;
-	// Quote to submit
-	RFQQuoteType quote = 2;
+  // Type: 'quote', 'ping'
+  string message_type = 1;
+  // Quote to submit
+  RFQQuoteType quote = 2;
 }
 
 message MakerStreamResponse {
-	// Type: 'request', 'quote_ack', 'quote_update', 'settlement_update', 'error',
-// 'pong'
-	string message_type = 1;
-	// RFQ request from taker
-	RFQRequestType request = 2;
-	// Acknowledgment for quote submission
-	QuoteStreamAck quote_ack = 3;
-	// Error message
-	StreamError error = 4;
-	// Processed quote update for maker
-	RFQProcessedQuoteType processed_quote = 5;
-	// Settlement update for maker
-	RFQSettlementType settlement = 6;
+  // Type: 'request', 'quote_ack', 'quote_update', 'settlement_update', 'error',
+  // 'pong'
+  string message_type = 1;
+  // RFQ request from taker
+  RFQRequestType request = 2;
+  // Acknowledgment for quote submission
+  QuoteStreamAck quote_ack = 3;
+  // Error message
+  StreamError error = 4;
+  // Processed quote update for maker
+  RFQProcessedQuoteType processed_quote = 5;
+  // Settlement update for maker
+  RFQSettlementMakerUpdate settlement = 6;
 }
 // Acknowledgment for stream operations
 message QuoteStreamAck {
-	// RFQ ID
-	uint64 rfq_id = 1;
-	// Status of the operation
-	string status = 2;
+  // RFQ ID
+  uint64 rfq_id = 1;
+  // Status of the operation
+  string status = 2;
+}
+// RFQ settlement update streamed to maker in real-time
+message RFQSettlementMakerUpdate {
+  // List of quotes considered for settlement
+  repeated RFQSettlementQuote quotes = 50;
+  // RFQ ID
+  uint64 rfq_id = 1;
+  // Market ID
+  string market_id = 2;
+  // Taker address
+  string taker = 3;
+  // Direction (long/short)
+  string direction = 4;
+  // Margin amount
+  string margin = 5;
+  // Quantity
+  string quantity = 6;
+  // Worst acceptable price
+  string worst_price = 7;
+  // Unfilled action details
+  RFQSettlementUnfilledActionType unfilled_action = 8;
+  // Fallback quantity
+  string fallback_quantity = 9;
+  // Fallback margin
+  string fallback_margin = 10;
+  // Transaction time timestamp
+  uint64 transaction_time = 11;
+  // Creation timestamp
+  sint64 created_at = 12;
+  // Last update timestamp
+  sint64 updated_at = 13;
+  // Event time timestamp
+  uint64 event_time = 14;
+  // Block height
+  uint64 height = 15;
+  // Settlement CID
+  string cid = 16;
+}
+// Quote data embedded in settlement
+message RFQSettlementQuote {
+  // Maker address
+  string maker = 1;
+  // Price
+  string price = 2;
+  // Quoted margin amount
+  string quoted_margin = 3;
+  // Quoted quantity
+  string quoted_quantity = 4;
+  // Executed margin amount
+  string executed_margin = 5;
+  // Executed quantity
+  string executed_quantity = 6;
+  // Expiry timestamp and height
+  RFQExpiryType expiry = 7;
+  // Signature
+  string signature = 8;
+  // Nonce
+  uint64 nonce = 9;
+  // Quote status (accepted, rejected, expired)
+  string status = 10;
 }

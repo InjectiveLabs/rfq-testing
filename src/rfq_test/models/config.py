@@ -26,6 +26,7 @@ class IndexerConfig(BaseModel):
     
     ws_endpoint: str  # Base URL for WebSocket streams (TakerStream/MakerStream appended)
     http_endpoint: str
+    grpc_endpoint: Optional[str] = None  # Native gRPC endpoint (host:port)
     grpc_web_endpoint: Optional[str] = None  # Optional gRPC-web endpoint
 
 

@@ -33,6 +33,8 @@ class MarketMaker:
         quote_validity_seconds: int = 20,
         chain_id: Optional[str] = None,
         contract_address: Optional[str] = None,
+        subscribe_to_quotes_updates: bool = False,
+        subscribe_to_settlement_updates: bool = False,
     ):
         self.wallet = wallet
         self.ws_url = ws_url
@@ -40,6 +42,8 @@ class MarketMaker:
         self.quote_validity_seconds = quote_validity_seconds
         self.chain_id = chain_id
         self.contract_address = contract_address
+        self.subscribe_to_quotes_updates = subscribe_to_quotes_updates
+        self.subscribe_to_settlement_updates = subscribe_to_settlement_updates
         self._ws_client: Optional[MakerStreamClient] = None
     
     @property
@@ -49,7 +53,12 @@ class MarketMaker:
     
     async def connect(self) -> None:
         """Connect to WebSocket MakerStream."""
-        self._ws_client = MakerStreamClient(self.ws_url)
+        self._ws_client = MakerStreamClient(
+            self.ws_url,
+            maker_address=self.address,
+            subscribe_to_quotes_updates=self.subscribe_to_quotes_updates,
+            subscribe_to_settlement_updates=self.subscribe_to_settlement_updates,
+        )
         await self._ws_client.connect()
     
     async def disconnect(self) -> None:
@@ -109,6 +118,8 @@ class MarketMaker:
         price: Optional[Decimal] = None,
         quantity_override: Optional[Decimal] = None,
         margin_override: Optional[Decimal] = None,
+        maker_subaccount_nonce: int = 0,
+        min_fill_quantity: Optional[str] = None,
     ) -> dict:
         """Build, sign, and send a quote for a request.
         
@@ -121,6 +132,10 @@ class MarketMaker:
                 to send the remainder to the orderbook.
             margin_override: Optional quote margin. If None and quantity_override is set,
                 margin is scaled proportionally (maker_margin = taker_margin * quote_qty / taker_qty).
+            maker_subaccount_nonce: Optional maker subaccount nonce to include in the
+                quote payload and signature.
+            min_fill_quantity: Optional minimum fill quantity to include in the quote
+                payload and signature.
             
         Returns:
             Quote data that was sent
@@ -177,6 +192,8 @@ class MarketMaker:
             expiry=expiry,
             chain_id=self.chain_id,
             contract_address=self.contract_address,
+            maker_subaccount_nonce=maker_subaccount_nonce,
+            min_fill_quantity=min_fill_quantity,
         )
 
         # Build quote payload (indexer expects chain_id and contract_address)
@@ -191,7 +208,10 @@ class MarketMaker:
             "maker": self.address,
             "taker": taker,
             "signature": signature,
+            "maker_subaccount_nonce": maker_subaccount_nonce,
         }
+        if min_fill_quantity is not None:
+            quote_data["min_fill_quantity"] = min_fill_quantity
         if self.chain_id is not None:
             quote_data["chain_id"] = self.chain_id
         if self.contract_address is not None:

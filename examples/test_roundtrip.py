@@ -6,6 +6,7 @@ import logging
 import os
 import sys
 import time
+import uuid
 from decimal import Decimal
 from pathlib import Path
 
@@ -49,7 +50,11 @@ async def main():
     print(f"📜 Contract: {contract_address}\n")
 
     # Step 1: Connect MM to MakerStream
-    mm_client = MakerStreamClient(config.indexer.ws_endpoint, timeout=10.0)
+    mm_client = MakerStreamClient(
+        config.indexer.ws_endpoint,
+        maker_address=mm_wallet.inj_address,
+        timeout=10.0,
+    )
     await mm_client.connect()
     print("✅ MM connected to MakerStream")
 
@@ -66,21 +71,32 @@ async def main():
     await asyncio.sleep(2)
 
     # Step 3: Retail sends RFQ request
-    rfq_id = int(time.time() * 1000)
-    expiry_ms = rfq_id + 300_000  # 5 min
+    client_id = str(uuid.uuid4())
+    expiry_ms = int(time.time() * 1000) + 300_000  # 5 min
     request_data = {
         "request_address": retail_wallet.inj_address,
-        "rfq_id": rfq_id,
+        "client_id": client_id,
         "market_id": market.id,
         "direction": "long",
         "margin": "100",
         "quantity": "10",
         "worst_price": "100",
-        "expiry": expiry_ms,
+        "expiry": {"ts": expiry_ms},
     }
-    print(f"\n📤 Retail sending request (RFQ#{rfq_id})...")
-    await retail_client.send_request(request_data)
-    print("   Request sent!")
+    print(f"\n📤 Retail sending request (client_id={client_id})...")
+    request_ack = await retail_client.send_request(
+        request_data,
+        wait_for_response=True,
+        response_timeout=10.0,
+    )
+    if not request_ack or request_ack.get("type") != "ack" or not request_ack.get("rfq_id"):
+        print(f"   ❌ No request ACK received: {request_ack}")
+        await mm_client.close()
+        await retail_client.close()
+        return
+
+    rfq_id = int(request_ack["rfq_id"])
+    print(f"   📬 Request ACK received: RFQ#{rfq_id} status={request_ack['status']}")
 
     # Step 4: MM waits for request
     print("\n⏳ MM waiting for request...")
@@ -98,6 +114,8 @@ async def main():
     # Step 5: MM builds and sends quote (with ACK wait)
     taker = received.get("taker") or received.get("request_address", "")
     expiry = int(time.time() * 1000) + 20_000
+    maker_subaccount_nonce = 0
+    min_fill_quantity = None
 
     signature = sign_quote(
         private_key=mm_wallet.private_key,
@@ -114,6 +132,8 @@ async def main():
         expiry=expiry,
         chain_id=chain_id,
         contract_address=contract_address,
+        maker_subaccount_nonce=maker_subaccount_nonce,
+        min_fill_quantity=min_fill_quantity,
     )
 
     quote_data = {
@@ -129,6 +149,8 @@ async def main():
         "maker": mm_wallet.inj_address,
         "taker": taker,
         "signature": signature,
+        "maker_subaccount_nonce": maker_subaccount_nonce,
+        "min_fill_quantity": min_fill_quantity,
     }
 
     print(f"\n📤 MM sending quote (price=1.5, expiry={expiry})...")

@@ -7,10 +7,12 @@
   "scripts": {
     "start": "node index.js",
     "test": "node index.js",
-    "ts-retail": "tsx retail-scripts/main.ts",
-    "ts-mm": "tsx mm-scripts/main.ts",
-    "ts-retail-setup": "tsx retail-scripts/setup.ts",
-    "ts-mm-setup": "tsx mm-scripts/setup.ts",
+    "ts-retail": "tsx ts-retail/main.ts",
+    "ts-mm": "tsx ts-mm/main.ts",
+    "ts-retail-grpc": "tsx ts-retail/main-grpc.ts",
+    "ts-mm-grpc": "tsx ts-mm/main-grpc.ts",
+    "ts-retail-setup": "tsx ts-retail/setup.ts",
+    "ts-mm-setup": "tsx ts-mm/setup.ts",
     "build": "tsc",
     "build:watch": "tsc --watch"
   },
@@ -23,6 +25,7 @@
     "@injectivelabs/utils": "^1.17.4",
     "dotenv": "^17.2.3",
     "ethers": "^6.10.0",
+    "uuid": "^11.1.0",
     "google-proto-files": "^4.0.0",
     "ws": "^8.19.0"
   },

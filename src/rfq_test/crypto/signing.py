@@ -42,6 +42,8 @@ class SignQuoteData:
     mm: str  # maker_margin
     p: str   # price
     e: int   # expiry
+    ms: int = 0  # maker_subaccount_nonce
+    min_fill_quantity: Optional[str] = None  # omitted from signature if not set
     chain_id: str = ""
     contract_address: str = ""
 
@@ -64,10 +66,13 @@ class SignQuoteData:
         out["tm"] = self.tm
         out["tq"] = self.tq
         out["m"] = self.m
+        out["ms"] = self.ms
         out["mq"] = self.mq
         out["mm"] = self.mm
         out["p"] = self.p
         out["e"] = {"ts": self.e}
+        if self.min_fill_quantity is not None:
+            out["mfq"] = self.min_fill_quantity
         return out
 
 
@@ -86,6 +91,8 @@ def sign_quote(
     expiry: int,
     chain_id: Optional[str] = None,
     contract_address: Optional[str] = None,
+    maker_subaccount_nonce: int = 0,
+    min_fill_quantity: Optional[str] = None,
 ) -> str:
     """Sign a quote with the maker's private key.
 
@@ -107,6 +114,8 @@ def sign_quote(
         expiry: Expiry timestamp (unix ms or s)
         chain_id: Chain ID for contract verification (optional)
         contract_address: Contract address for contract verification (optional)
+        maker_subaccount_nonce: Maker's subaccount nonce (included as "ms" in signature)
+        min_fill_quantity: Minimum fill quantity (included as "mfq" only if provided)
 
     Returns:
         Hex-encoded signature (without 0x prefix)
@@ -114,22 +123,12 @@ def sign_quote(
     # Build sign quote data
     # Contract expects lowercase direction ("long" or "short") for signature verification
     direction_lower = direction.lower() if isinstance(direction, str) else direction.value.lower()
-    
-    # Normalize price to ensure consistent string format
-    # - Remove trailing zeros AFTER decimal point only (4.200 -> 4.2)
-    # - Keep integer values as-is (500 stays 500, not 5)
-    # - Do NOT use Decimal.normalize() as it produces scientific notation (500 -> 5E+2)
-    from decimal import Decimal
-    if isinstance(price, (str, Decimal)):
-        price_decimal = Decimal(str(price))
-        # Format without scientific notation
-        price_str = format(price_decimal, 'f')
-        # Only strip trailing zeros if there's a decimal point
-        if '.' in price_str:
-            price_str = price_str.rstrip('0').rstrip('.')
-    else:
-        price_str = str(price)
-    
+
+    # Preserve the exact price string that will be sent to the indexer.
+    # Any normalization here can make the signed payload differ from the quote
+    # payload (for example trailing zeros), which breaks signature recovery.
+    price_str = str(price)
+
     sign_data = SignQuoteData(
         rfq_id=rfq_id,
         mi=market_id,
@@ -140,8 +139,10 @@ def sign_quote(
         m=maker,
         mq=str(maker_quantity),
         mm=str(maker_margin),
-        p=price_str,  # Use normalized price string
+        p=price_str,
         e=expiry,
+        ms=maker_subaccount_nonce,
+        min_fill_quantity=min_fill_quantity,
         chain_id=chain_id or "",
         contract_address=contract_address or "",
     )

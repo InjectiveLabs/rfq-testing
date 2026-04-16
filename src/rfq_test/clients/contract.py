@@ -4,6 +4,7 @@ import asyncio
 import base64
 import json
 import logging
+import re
 from decimal import Decimal
 from typing import Optional
 
@@ -17,6 +18,8 @@ from rfq_test.models.types import Direction, Quote
 
 logger = logging.getLogger(__name__)
 
+_HEX_SIGNATURE_RE = re.compile(r"^(0x)?[0-9a-fA-F]+$")
+
 
 def _get_sender_address(private_key: str) -> str:
     """Get Injective address from private key."""
@@ -29,6 +32,33 @@ def _get_sender_address(private_key: str) -> str:
     priv_key = PrivateKey.from_hex(private_key)
     pub_key = priv_key.to_public_key()
     return pub_key.to_address().to_acc_bech32()
+
+
+def _normalize_contract_quote(quote: dict) -> dict:
+    """Normalize quote payload to the contract's current JSON shape."""
+    normalized = dict(quote)
+
+    expiry = normalized.get("expiry")
+    if isinstance(expiry, str):
+        if expiry.isdigit():
+            normalized["expiry"] = {"ts": int(expiry)}
+    elif isinstance(expiry, int):
+        normalized["expiry"] = {"ts": expiry}
+    elif isinstance(expiry, dict):
+        if "ts" in expiry or "h" in expiry:
+            normalized["expiry"] = expiry
+        elif "timestamp" in expiry:
+            normalized["expiry"] = {"ts": int(expiry["timestamp"])}
+        elif "height" in expiry:
+            normalized["expiry"] = {"h": int(expiry["height"])}
+
+    signature = normalized.get("signature")
+    if isinstance(signature, str) and _HEX_SIGNATURE_RE.fullmatch(signature):
+        sig_hex = signature[2:] if signature.startswith("0x") else signature
+        sig_bytes = bytes.fromhex(sig_hex)
+        normalized["signature"] = base64.b64encode(sig_bytes).decode("utf-8")
+
+    return normalized
 
 
 class ContractClient:
@@ -492,6 +522,7 @@ class ContractClient:
         quantity: Decimal,
         worst_price: Optional[Decimal] = None,
         unfilled_action: Optional[dict] = None,
+        cid: Optional[str] = None,
     ) -> str:
         """Accept quote(s) and settle trade.
         
@@ -508,6 +539,7 @@ class ContractClient:
                 - None: No fallback, only fill via RFQ quotes
                 - {"limit": {"price": "4.5"}}: Place limit order for unfilled at specified price
                 - {"market": {}}: Place market order (IOC) for unfilled at worst_price
+            cid: Optional settlement CID attached to any orderbook execution created by AcceptQuote
             
         Returns:
             Transaction hash
@@ -548,22 +580,10 @@ class ContractClient:
         # Add unfilled_action (contract expects Option<PostUnfilledAction>)
         # Can be: None, {"limit": {"price": "X"}}, or {"market": {}}
         accept_msg["unfilled_action"] = unfilled_action
-        
-        # Ensure quotes array items have correct types (expiry should be int)
-        # Also convert signature from hex to base64 (contract expects base64)
-        for quote in quotes:
-            if "expiry" in quote and isinstance(quote["expiry"], str):
-                quote["expiry"] = int(quote["expiry"])
-            
-            # Convert signature from hex to base64
-            if "signature" in quote:
-                sig_hex = quote["signature"]
-                # Remove 0x prefix if present
-                if sig_hex.startswith("0x"):
-                    sig_hex = sig_hex[2:]
-                # Convert hex to bytes, then to base64
-                sig_bytes = bytes.fromhex(sig_hex)
-                quote["signature"] = base64.b64encode(sig_bytes).decode("utf-8")
+        if cid:
+            accept_msg["cid"] = cid
+
+        accept_msg["quotes"] = [_normalize_contract_quote(quote) for quote in quotes]
         
         msg = {
             "accept_quote": accept_msg
