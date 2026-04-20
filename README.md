@@ -107,7 +107,7 @@ python examples/test_settlement.py
 | Item | Value |
 |------|-------|
 | Chain ID | `injective-888` |
-| RFQ Contract | `inj1vtswdey9c70n475q7q75wgmkfdw8xw4rcfeqa4` |
+| RFQ Contract | `inj1qw7jk82hjvf79tnjykux6zacuh9gl0z0wl3ruk` (`0.1.0-alpha.6`) |
 | MakerStream WSS | `wss://testnet.rfq.ws.injective.network/injective_rfq_rpc.InjectiveRfqRPC/MakerStream` |
 | TakerStream WSS | `wss://testnet.rfq.ws.injective.network/injective_rfq_rpc.InjectiveRfqRPC/TakerStream` |
 | Chain gRPC | `testnet-grpc.injective.dev:443` |
@@ -154,7 +154,7 @@ mm_client = MakerStreamClient(
 )
 ```
 
-> **Quote signing note:** The signed JSON payload includes a required `"ms"` field (maker_subaccount_nonce) between `"m"` and `"mq"`. See [PYTHON_BUILDING_GUIDE.md](PYTHON_BUILDING_GUIDE.md#quote-signing) for the full field order.
+> **Quote signing note:** The signed JSON payload field order is `c, ca, mi, id, t, td, tm, tq, m, mq, mm, p, e [, mfq]` — matching the upstream [ws-client `verify-signature.js`](https://github.com/InjectiveLabs/ws-client/blob/main/rfq-tests/signature/verify-signature.js) canonical spec. **Do not include `"ms"` (maker_subaccount_nonce)** — the indexer's legacy + v2 verifiers both reject payloads containing it. See [PYTHON_BUILDING_GUIDE.md](PYTHON_BUILDING_GUIDE.md#quote-signing) for the full field order.
 
 ### Conditional Orders (TP/SL)
 
@@ -164,10 +164,14 @@ See [PYTHON_BUILDING_GUIDE.md — Conditional Orders](PYTHON_BUILDING_GUIDE.md#c
 
 ### Supported Markets (Testnet)
 
-| Symbol | Market ID |
-|--------|-----------|
-| INJ/USDT PERP | `0x17ef48032cb24375ba7c2e39f384e56433bcab20cbee9a7357e4cba2eb00abe6` |
-| ATOM/USDT PERP | `0xd97d0da6f6c11710ef06315971250e4e9aed4b7d4cd02059c9477ec8cf243782` |
+| Symbol | Market ID | Quote denom |
+|--------|-----------|-------------|
+| INJ/USDC PERP  | `0xdc70164d7120529c3cd84278c98df4151210c0447a65a2aab03459cf328de41e` | `erc20:0x0C382e685bbeeFE5d3d9C29e29E341fEE8E84C5d` (USDC) |
+| BTC/USDC PERP  | `0xfd704649cf3a516c0c145ab0111717c44640d8dbe52a462ae35cadf2f6df1515` | same |
+| LINK/USDC PERP | `0xdbb9bb072015238096f6e821ee9aab7affd741f8662a71acc14ac30ee6b687a5` | same |
+| ETH/USDC PERP  | `0x135de28700392fb1c17d40d5170a74f30055a4ad522feddafec42fbbbb780897` | same |
+
+Tick: `0.01` on both price and quantity for all four.
 
 ## License
 

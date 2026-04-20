@@ -1,7 +1,7 @@
 # Python Guide: Building RFQ Market Making & Retail Tools
 
 **For teams building standalone MM (Market Maker) or retail trading scripts.**  
-This guide helps you avoid common pitfalls and build correctly from day one. You do **not** need the rfq-qa-python-tests framework—everything here is self-contained.
+This guide helps you avoid common pitfalls and build correctly from day one. You do **not** need the `rfq-testing` framework—everything here is self-contained.
 
 ---
 
@@ -185,10 +185,15 @@ def sign_quote(
     maker_quantity: str,
     price: str,
     expiry: int,              # Unix timestamp in milliseconds
-    maker_subaccount_nonce: int = 0,   # required — use 0 for default subaccount
     min_fill_quantity: str = None,     # optional V2 field
 ) -> str:
-    """Sign a quote. Returns hex signature (without 0x prefix)."""
+    """Sign a quote. Returns hex signature (without 0x prefix).
+
+    Field order matches ws-client's canonical buildSignQuote:
+      c, ca, mi, id, t, td, tm, tq, m, mq, mm, p, e [, mfq]
+    Do NOT add an `ms` (maker_subaccount_nonce) field — the indexer's
+    legacy + v2 verifiers both reject payloads that include it.
+    """
     payload = {
         "c": chain_id,
         "ca": contract_address,
@@ -199,7 +204,6 @@ def sign_quote(
         "tm": taker_margin,
         "tq": taker_quantity,
         "m": maker,
-        "ms": maker_subaccount_nonce,   # REQUIRED — position between m and mq
         "mq": maker_quantity,
         "mm": maker_margin,
         "p": price,

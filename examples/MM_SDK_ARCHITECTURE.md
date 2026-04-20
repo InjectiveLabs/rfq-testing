@@ -260,9 +260,9 @@ const mm = new MarketMakerSDK({
   config: {
     wsUrl: 'ws://localhost:4464/ws',
     markets: [
-      'INJ/USDT',
-      'BTC/USDT',
-      'ETH/USDT'
+      'INJ/USDC',
+      'BTC/USDC',
+      'ETH/USDC'
     ]
   }
 });
