@@ -22,16 +22,28 @@ contract:
 
 # Testnet derivative markets. Mark price: .../injective/exchange/v2/derivative/markets/{id}
 markets:
-  - id: "0x17ef48032cb24375ba7c2e39f384e56433bcab20cbee9a7357e4cba2eb00abe6"
-    symbol: "INJ/USDT PERP"
+  - id: "0xdc70164d7120529c3cd84278c98df4151210c0447a65a2aab03459cf328de41e"
+    symbol: "INJ/USDC PERP"
     base: "INJ"
-    quote: "USDT"
+    quote: "USDC"
     price_source: "oracle"
     min_quantity: 1.0
-  - id: "0xd97d0da6f6c11710ef06315971250e4e9aed4b7d4cd02059c9477ec8cf243782"
-    symbol: "ATOM/USDT PERP"
-    base: "ATOM"
-    quote: "USDT"
+  - id: "0xfd704649cf3a516c0c145ab0111717c44640d8dbe52a462ae35cadf2f6df1515"
+    symbol: "BTC/USDC PERP"
+    base: "BTC"
+    quote: "USDC"
+    price_source: "oracle"
+    min_quantity: 0.001
+  - id: "0xdbb9bb072015238096f6e821ee9aab7affd741f8662a71acc14ac30ee6b687a5"
+    symbol: "LINK/USDC PERP"
+    base: "LINK"
+    quote: "USDC"
+    price_source: "oracle"
+    min_quantity: 0.1
+  - id: "0x135de28700392fb1c17d40d5170a74f30055a4ad522feddafec42fbbbb780897"
+    symbol: "ETH/USDC PERP"
+    base: "ETH"
+    quote: "USDC"
     price_source: "oracle"
     min_quantity: 0.01
 
