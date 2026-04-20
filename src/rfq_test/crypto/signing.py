@@ -87,10 +87,19 @@ class SignQuoteData:
     min_fill_quantity: Optional[Union[str, Decimal]] = None  # mfq — V2 optional field
 
     def to_dict(self) -> dict:
-        """Convert to dict with exact field order required by the contract.
+        """Convert to dict with exact field order required by the indexer + contract.
 
-        Order: c, ca, mi, id, t, td, tm, tq, m, ms, mq, mm, p, e [, mfq].
-        Do NOT reorder — the contract hashes this exact JSON string.
+        Order: c, ca, mi, id, t, td, tm, tq, m, mq, mm, p, e [, mfq].
+        Do NOT reorder — the indexer + contract both hash this exact JSON string.
+
+        Note on `ms` (maker_subaccount_nonce): NOT part of the current canonical
+        signed payload. The upstream ws-client reference implementation at
+        github.com/InjectiveLabs/ws-client/rfq-tests/signature/verify-signature.js
+        does not emit it. Including `ms` here causes the indexer's legacy + v2
+        verifiers to reject the signature (the on-chain Rust contract is more
+        permissive and accepts payloads with or without it, which hid the bug
+        until E2E'd through the indexer). If non-default subaccounts are added
+        to the protocol later, the server spec needs updating first.
         """
         rfq_id_int = int(self.rfq_id) if isinstance(self.rfq_id, str) else self.rfq_id
         out = {}
@@ -105,7 +114,6 @@ class SignQuoteData:
         out["tm"] = self.tm
         out["tq"] = self.tq
         out["m"] = self.m
-        out["ms"] = self.ms
         out["mq"] = self.mq
         out["mm"] = self.mm
         out["p"] = self.p
