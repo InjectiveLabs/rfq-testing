@@ -13,6 +13,7 @@ Field layouts match the injective_rfq_rpc service proto:
 - TakerStreamRequest: field 3 = conditional_order, field 4 = conditional_order_signature
 - TakerStreamResponse: field 5 = conditional_order_ack
 """
+from __future__ import annotations
 
 from dataclasses import dataclass, field
 from typing import Optional
