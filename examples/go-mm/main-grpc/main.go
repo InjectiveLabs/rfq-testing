@@ -1,21 +1,18 @@
 /*
- * !!! v1 SIGNING — NEEDS PORT TO v2 (EIP-712) !!!
- * As of 2026-04-29 the indexer rejects empty `sign_mode`. v2 is the
- * rfq-testing standard. Canonical v2 reference (port from these):
- *   - injective-indexer service/rfq/signature/eip712.go (Go)
- *   - rfq-testing src/rfq_test/crypto/eip712.py
- *   - PYTHON_BUILDING_GUIDE.md
- *
- * RFQ Market Maker Main Flow (gRPC)
+ * RFQ Market Maker Main Flow (gRPC, v2 EIP-712 signing)
  *
  * Uses native gRPC MakerStream (bidirectional) instead of WebSocket.
+ *
+ * Wire payloads MUST carry `sign_mode: "v2"` — empty values are rejected
+ * with `value of message.sign_mode must be one of "v1", "v2"`. The full
+ * spec lives in PYTHON_BUILDING_GUIDE.md and rfq.inj.so/onboarding.html#sign.
  *
  * Flow:
  * 0. MM has already granted permissions to RFQ contract (see setup/setup.go)
  * 1. MM connects to gRPC MakerStream with maker metadata
  * 2. MM receives RFQ requests from the stream
- * 3. MM builds and signs quotes
- * 4. MM sends quotes back via the same stream
+ * 3. MM builds and signs quotes (v2 EIP-712 — see signQuoteV2 below)
+ * 4. MM sends quotes back via the same stream with sign_mode="v2"
  * 5. MM receives quote_ack, quote_update, settlement_update events
  *
  * Prerequisites:
@@ -25,15 +22,18 @@ package main
 
 import (
 	"context"
+	"encoding/binary"
 	"encoding/hex"
-	"encoding/json"
 	"fmt"
 	"log"
+	"math/big"
 	"os"
+	"strconv"
 	"time"
 
 	"github.com/joho/godotenv"
 
+	"github.com/cosmos/cosmos-sdk/types/bech32"
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	"github.com/ethereum/go-ethereum/common/hexutil"
 	ethcrypto "github.com/ethereum/go-ethereum/crypto"
@@ -65,76 +65,141 @@ func trim0x(s string) string {
 	return s
 }
 
-// SignQuote is the compact signing struct that matches the contract.
-// Field order: c, ca, mi, id, t, td, tm, tq, m, ms, mq, mm, p, e[, mfq]
-type SignQuote struct {
-	ChainID              string      `json:"c"`
-	ContractAddress      string      `json:"ca"`
-	MarketIndex          string      `json:"mi"`
-	RfqId                uint64      `json:"id"`
-	Taker                string      `json:"t,omitempty"`
-	TakerDirection       string      `json:"td"`
-	TakerMargin          string      `json:"tm,omitempty"`
-	TakerQuantity        string      `json:"tq,omitempty"`
-	Maker                string      `json:"m"`
-	MakerSubaccountNonce int         `json:"ms"`
-	MakerQuantity        string      `json:"mq"`
-	MakerMargin          string      `json:"mm"`
-	Price                string      `json:"p"`
-	Expiry               interface{} `json:"e"`
-	MinFillQuantity      string      `json:"mfq,omitempty"`
-}
+// --- EIP-712 v2 signing ----------------------------------------------------
+// Mirrors the indexer reference byte-for-byte.
 
-type ExpiryTS struct {
-	TS uint64 `json:"ts"`
-}
+const eip712DomainType = "EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)"
 
-type ExpiryH struct {
-	H uint64 `json:"h"`
-}
+const signQuoteType = "SignQuote(string marketId,uint64 rfqId,address taker,uint8 takerDirection," +
+	"string takerMargin,string takerQuantity,address maker,uint32 makerSubaccountNonce," +
+	"string makerQuantity,string makerMargin,string price,uint8 expiryKind," +
+	"uint64 expiryValue,string minFillQuantity,uint8 bindingKind)"
 
-func toSignQuote(req *pb.RFQRequestType, chainID, contractAddr, makerAddr string, price string, expiryMs uint64) SignQuote {
-	return SignQuote{
-		ChainID:              chainID,
-		ContractAddress:      contractAddr,
-		MarketIndex:          req.MarketId,
-		RfqId:                req.RfqId,
-		Taker:                req.RequestAddress,
-		TakerDirection:       req.Direction,
-		TakerMargin:          req.Margin,
-		TakerQuantity:        req.Quantity,
-		Maker:                makerAddr,
-		MakerSubaccountNonce: 0,
-		MakerQuantity:        req.Quantity,
-		MakerMargin:          req.Margin,
-		Price:                price,
-		Expiry:               ExpiryTS{TS: expiryMs},
+const eip712DomainName = "RFQ"
+const eip712DomainVersion = "1"
+
+func bech32ToEvm(addr string) ([20]byte, error) {
+	hrp, raw, err := bech32.DecodeAndConvert(addr)
+	if err != nil {
+		return [20]byte{}, fmt.Errorf("decode bech32 %q: %w", addr, err)
 	}
+	if hrp != "inj" {
+		return [20]byte{}, fmt.Errorf("expected hrp 'inj', got %q", hrp)
+	}
+	if len(raw) != 20 {
+		return [20]byte{}, fmt.Errorf("expected 20 bytes, got %d", len(raw))
+	}
+	var out [20]byte
+	copy(out[:], raw)
+	return out, nil
 }
 
-func signQuotePayload(sq SignQuote, privKeyHex string) (string, error) {
-	payload, err := json.Marshal(sq)
+func encU8(v uint8) []byte    { b := make([]byte, 32); b[31] = v; return b }
+func encU32(v uint32) []byte  { b := make([]byte, 32); binary.BigEndian.PutUint32(b[28:], v); return b }
+func encU64(v uint64) []byte  { b := make([]byte, 32); binary.BigEndian.PutUint64(b[24:], v); return b }
+func encAddr(a [20]byte) []byte { b := make([]byte, 32); copy(b[12:], a[:]); return b }
+func encString(s string) []byte { return ethcrypto.Keccak256([]byte(s)) }
+
+func chainIDWord(evmChainID uint64) []byte {
+	out := make([]byte, 32)
+	new(big.Int).SetUint64(evmChainID).FillBytes(out)
+	return out
+}
+
+func domainSeparator(evmChainID uint64, contractBech32 string) ([]byte, error) {
+	addr20, err := bech32ToEvm(contractBech32)
+	if err != nil {
+		return nil, err
+	}
+	buf := make([]byte, 0, 32*5)
+	buf = append(buf, ethcrypto.Keccak256([]byte(eip712DomainType))...)
+	buf = append(buf, encString(eip712DomainName)...)
+	buf = append(buf, encString(eip712DomainVersion)...)
+	buf = append(buf, chainIDWord(evmChainID)...)
+	buf = append(buf, encAddr(addr20)...)
+	return ethcrypto.Keccak256(buf), nil
+}
+
+type signQuoteInput struct {
+	PrivateKey           string
+	EvmChainID           uint64
+	ContractAddress      string // bech32
+	MarketID             string
+	RfqID                uint64
+	Taker                string // bech32
+	Direction            string // "long" or "short"
+	TakerMargin          string
+	TakerQuantity        string
+	Maker                string // bech32
+	MakerSubaccountNonce uint32
+	MakerQuantity        string
+	MakerMargin          string
+	Price                string
+	ExpiryKind           uint8 // 0 = timestamp_ms, 1 = block_height
+	ExpiryValue          uint64
+	MinFillQuantity      string // pass "" or "0" when absent
+}
+
+func signQuoteV2(in signQuoteInput) (string, error) {
+	takerAddr, err := bech32ToEvm(in.Taker)
+	if err != nil {
+		return "", fmt.Errorf("taker: %w", err)
+	}
+	makerAddr, err := bech32ToEvm(in.Maker)
+	if err != nil {
+		return "", fmt.Errorf("maker: %w", err)
+	}
+	var directionByte uint8
+	switch in.Direction {
+	case "long":
+		directionByte = 0
+	case "short":
+		directionByte = 1
+	default:
+		return "", fmt.Errorf("invalid direction %q", in.Direction)
+	}
+	mfq := in.MinFillQuantity
+	if mfq == "" {
+		mfq = "0"
+	}
+
+	buf := make([]byte, 0, 32*16)
+	buf = append(buf, ethcrypto.Keccak256([]byte(signQuoteType))...)
+	buf = append(buf, encString(in.MarketID)...)
+	buf = append(buf, encU64(in.RfqID)...)
+	buf = append(buf, encAddr(takerAddr)...)
+	buf = append(buf, encU8(directionByte)...)
+	buf = append(buf, encString(in.TakerMargin)...)
+	buf = append(buf, encString(in.TakerQuantity)...)
+	buf = append(buf, encAddr(makerAddr)...)
+	buf = append(buf, encU32(in.MakerSubaccountNonce)...)
+	buf = append(buf, encString(in.MakerQuantity)...)
+	buf = append(buf, encString(in.MakerMargin)...)
+	buf = append(buf, encString(in.Price)...)
+	buf = append(buf, encU8(in.ExpiryKind)...)
+	buf = append(buf, encU64(in.ExpiryValue)...)
+	buf = append(buf, encString(mfq)...)
+	buf = append(buf, encU8(1)...) // bindingKind = 1 (taker-specific)
+
+	msgHash := ethcrypto.Keccak256(buf)
+	domain, err := domainSeparator(in.EvmChainID, in.ContractAddress)
 	if err != nil {
 		return "", err
 	}
+	prefixed := append([]byte{0x19, 0x01}, append(domain, msgHash...)...)
+	digest := ethcrypto.Keccak256(prefixed)
 
-	fmt.Println("signed payload:", string(payload))
-	hash := ethcrypto.Keccak256(payload)
-
-	privKeyHex = trim0x(privKeyHex)
-	privKey, err := ethcrypto.HexToECDSA(privKeyHex)
+	privKey, err := ethcrypto.HexToECDSA(trim0x(in.PrivateKey))
 	if err != nil {
 		return "", err
 	}
-
-	sig, err := ethcrypto.Sign(hash, privKey)
+	sig, err := ethcrypto.Sign(digest, privKey)
 	if err != nil {
 		return "", err
 	}
-
-	// ethers-style signature (65 bytes, v = 27/28)
-	sig[64] += 27
-
+	if sig[64] < 27 {
+		sig[64] += 27
+	}
 	return hexutil.Encode(sig), nil
 }
 
@@ -146,12 +211,30 @@ func sendQuote(
 	mmPK string,
 	chainID string,
 	contractAddr string,
+	evmChainID uint64,
 ) error {
 	expiryMs := uint64(time.Now().Add(20 * time.Second).UnixMilli())
 	priceStr := fmt.Sprintf("%.1f", price)
 
-	sq := toSignQuote(req, chainID, contractAddr, makerAddr, priceStr, expiryMs)
-	sig, err := signQuotePayload(sq, mmPK)
+	sig, err := signQuoteV2(signQuoteInput{
+		PrivateKey:           mmPK,
+		EvmChainID:           evmChainID,
+		ContractAddress:      contractAddr,
+		MarketID:             req.MarketId,
+		RfqID:                req.RfqId,
+		Taker:                req.RequestAddress,
+		Direction:            req.Direction,
+		TakerMargin:          req.Margin,
+		TakerQuantity:        req.Quantity,
+		Maker:                makerAddr,
+		MakerSubaccountNonce: 0,
+		MakerQuantity:        req.Quantity,
+		MakerMargin:          req.Margin,
+		Price:                priceStr,
+		ExpiryKind:           0, // timestamp
+		ExpiryValue:          expiryMs,
+		MinFillQuantity:      "",
+	})
 	if err != nil {
 		return fmt.Errorf("sign error: %w", err)
 	}
@@ -169,6 +252,7 @@ func sendQuote(
 		Maker:           makerAddr,
 		Taker:           req.RequestAddress,
 		Signature:       sig,
+		SignMode:        "v2", // required by indexer
 	}
 
 	fmt.Printf("\n📤 Sending quote (price=%s)\n", priceStr)
@@ -185,6 +269,15 @@ func main() {
 	mmPK := mustEnv("MM_PRIVATE_KEY")
 	contractAddr := mustEnv("CONTRACT_ADDRESS")
 	chainID := mustEnv("CHAIN_ID")
+	// EVM_CHAIN_ID for the EIP-712 v2 domain separator (1439 testnet, 1776 mainnet).
+	evmChainID := uint64(1439)
+	if v := os.Getenv("EVM_CHAIN_ID"); v != "" {
+		parsed, err := strconv.ParseUint(v, 10, 64)
+		if err != nil {
+			log.Fatalf("EVM_CHAIN_ID must be a uint64: %v", err)
+		}
+		evmChainID = parsed
+	}
 
 	// Derive maker address (Injective bech32)
 	mmPkDecoded, err := hex.DecodeString(trim0x(mmPK))
@@ -265,7 +358,7 @@ func main() {
 
 			// Demo pricing ladder
 			for _, p := range []float64{1.3, 1.4, 1.5} {
-				if err := sendQuote(stream, req, p, makerAddr, mmPK, chainID, contractAddr); err != nil {
+				if err := sendQuote(stream, req, p, makerAddr, mmPK, chainID, contractAddr, evmChainID); err != nil {
 					log.Printf("sendQuote error: %v", err)
 				}
 			}
