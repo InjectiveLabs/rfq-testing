@@ -883,16 +883,22 @@ class TakerStreamRequest:
     """Message sent by taker in bidirectional stream.
 
     Fields: 1=message_type, 2=request, 3=conditional_order,
-    4=conditional_order_signature.
+    4=conditional_order_signature, 5=conditional_order_sign_mode.
 
     Set message_type to "ping" for keep-alive, "request" when sending an
     RFQ request (populate field 2), or "conditional_order" when submitting
-    a TP/SL order (populate fields 3 and 4).
+    a TP/SL order (populate fields 3 and 4 — and field 5, see below).
+
+    `conditional_order_sign_mode` is required for conditional_order
+    messages: the indexer rejects empty values with
+    `value of message.conditional_order_sign_mode must be one of "v1", "v2"`.
+    Use "v2" — it is the only mode this client signs.
     """
     message_type: str = ""  # "ping" | "request" | "conditional_order"
     request: Optional[CreateRFQRequestType] = None
     conditional_order: Optional[ConditionalOrderInput] = None
     conditional_order_signature: str = ""
+    conditional_order_sign_mode: str = ""
 
     def encode(self) -> bytes:
         result = b""
@@ -902,6 +908,7 @@ class TakerStreamRequest:
         if self.conditional_order is not None:
             result += _encode_message(3, self.conditional_order.encode())
         result += _encode_string(4, self.conditional_order_signature)
+        result += _encode_string(5, self.conditional_order_sign_mode)
         return result
 
 

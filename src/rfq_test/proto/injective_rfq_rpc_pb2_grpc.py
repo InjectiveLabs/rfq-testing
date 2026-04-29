@@ -65,6 +65,16 @@ class InjectiveRfqRPCStub(object):
                 request_serializer=injective__rfq__rpc__pb2.StreamSettlementRequest.SerializeToString,
                 response_deserializer=injective__rfq__rpc__pb2.StreamSettlementResponse.FromString,
                 _registered_method=True)
+        self.CreateConditionalOrder = channel.unary_unary(
+                '/injective_rfq_rpc.InjectiveRfqRPC/CreateConditionalOrder',
+                request_serializer=injective__rfq__rpc__pb2.CreateConditionalOrderRequest.SerializeToString,
+                response_deserializer=injective__rfq__rpc__pb2.CreateConditionalOrderResponse.FromString,
+                _registered_method=True)
+        self.ListConditionalOrders = channel.unary_unary(
+                '/injective_rfq_rpc.InjectiveRfqRPC/ListConditionalOrders',
+                request_serializer=injective__rfq__rpc__pb2.ListConditionalOrdersRequest.SerializeToString,
+                response_deserializer=injective__rfq__rpc__pb2.ListConditionalOrdersResponse.FromString,
+                _registered_method=True)
         self.TakerStream = channel.stream_stream(
                 '/injective_rfq_rpc.InjectiveRfqRPC/TakerStream',
                 request_serializer=injective__rfq__rpc__pb2.TakerStreamStreamingRequest.SerializeToString,
@@ -123,6 +133,20 @@ class InjectiveRfqRPCServicer(object):
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
+    def CreateConditionalOrder(self, request, context):
+        """Create a conditional TP/SL order
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def ListConditionalOrders(self, request, context):
+        """List conditional TP/SL orders
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
     def TakerStream(self, request_iterator, context):
         """Bidirectional stream for takers: send requests, receive quotes
         """
@@ -169,6 +193,16 @@ def add_InjectiveRfqRPCServicer_to_server(servicer, server):
                     servicer.StreamSettlement,
                     request_deserializer=injective__rfq__rpc__pb2.StreamSettlementRequest.FromString,
                     response_serializer=injective__rfq__rpc__pb2.StreamSettlementResponse.SerializeToString,
+            ),
+            'CreateConditionalOrder': grpc.unary_unary_rpc_method_handler(
+                    servicer.CreateConditionalOrder,
+                    request_deserializer=injective__rfq__rpc__pb2.CreateConditionalOrderRequest.FromString,
+                    response_serializer=injective__rfq__rpc__pb2.CreateConditionalOrderResponse.SerializeToString,
+            ),
+            'ListConditionalOrders': grpc.unary_unary_rpc_method_handler(
+                    servicer.ListConditionalOrders,
+                    request_deserializer=injective__rfq__rpc__pb2.ListConditionalOrdersRequest.FromString,
+                    response_serializer=injective__rfq__rpc__pb2.ListConditionalOrdersResponse.SerializeToString,
             ),
             'TakerStream': grpc.stream_stream_rpc_method_handler(
                     servicer.TakerStream,
@@ -344,6 +378,60 @@ class InjectiveRfqRPC(object):
             '/injective_rfq_rpc.InjectiveRfqRPC/StreamSettlement',
             injective__rfq__rpc__pb2.StreamSettlementRequest.SerializeToString,
             injective__rfq__rpc__pb2.StreamSettlementResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def CreateConditionalOrder(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/injective_rfq_rpc.InjectiveRfqRPC/CreateConditionalOrder',
+            injective__rfq__rpc__pb2.CreateConditionalOrderRequest.SerializeToString,
+            injective__rfq__rpc__pb2.CreateConditionalOrderResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def ListConditionalOrders(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/injective_rfq_rpc.InjectiveRfqRPC/ListConditionalOrders',
+            injective__rfq__rpc__pb2.ListConditionalOrdersRequest.SerializeToString,
+            injective__rfq__rpc__pb2.ListConditionalOrdersResponse.FromString,
             options,
             channel_credentials,
             insecure,

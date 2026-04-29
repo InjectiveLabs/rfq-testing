@@ -1,3 +1,7 @@
+# Local notes (server creds, AI scratchpads) — never commit
+CLAUDE.md
+DEPLOYMENT.md
+
 # Virtual environment
 .venv/
 venv/
