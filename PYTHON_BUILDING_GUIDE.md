@@ -133,115 +133,184 @@ for msg_type in MSG_TYPES:
 
 ---
 
-## Quote Signing
+## Quote Signing (v2)
 
-### SignQuote Payload (Contract Verification)
+The rfq-testing repo standard is **EIP-712 v2** signing. v1 (raw-JSON keccak256) still exists in the indexer/contract for legacy clients but is not documented here. As of the 2026-04-29 devnet deploy, every quote and conditional order MUST carry `sign_mode: "v2"` on the wire — empty values are rejected with `value of message.sign_mode must be one of "v1", "v2"`.
 
-The contract verifies the maker's signature by building a JSON payload and hashing it with **keccak256**. The payload must match exactly — wrong field order or missing fields will cause signature rejection.
+> **TL;DR:** Build the `SignQuote` typed-data digest, sign it with secp256k1 raw (no EIP-191 prefix), prepend `0x` to the signature, and put `sign_mode: "v2"` in the wire payload.
 
-### Field Order and Keys
+### What v2 binds
 
-> **IMPORTANT:** The field `ms` (maker_subaccount_nonce) is required and must appear between `m` and `mq`. Omitting it or placing it elsewhere will cause the contract to reject the signature.
+The signature does NOT bind the wire fields `chain_id` / `contract_address`. Those are bound by the **EIP-712 domain separator** instead:
 
-| Key | Field | Type | Notes |
-|-----|-------|------|-------|
-| `c` | chain_id | string | |
-| `ca` | contract_address | string | |
-| `mi` | market_id | string | |
-| `id` | rfq_id | number | |
-| `t` | taker | string | Injective address |
-| `td` | taker_direction | string | `"long"` or `"short"` |
-| `tm` | taker_margin | string | FPDecimal |
-| `tq` | taker_quantity | string | FPDecimal |
-| `m` | maker | string | Injective address |
-| `ms` | maker_subaccount_nonce | number | Required. Use `0` if not using subaccounts. |
-| `mq` | maker_quantity | string | FPDecimal |
-| `mm` | maker_margin | string | FPDecimal |
-| `p` | price | string | FPDecimal |
-| `e` | expiry | object | `{"ts": <unix_ms>}` or `{"h": <block_height>}` |
-| `mfq` | min_fill_quantity | string | Optional V2 field. Append at end only when needed. |
+```
+domain = EIP712Domain(
+  name              = "RFQ",
+  version           = "1",
+  chainId           = <EVM chain ID>,            # 1439 for devnet+testnet
+  verifyingContract = <bech32_to_evm(contract)>, # 20-byte hex of the bech32 address
+)
+```
 
-**Order matters.** Serialize with `json.dumps(..., separators=(",", ":"))` — no spaces, no `sort_keys`. The contract hashes this exact JSON string.
+EVM chain ID `1439` covers both devnet and testnet today; mainnet will be `1776`.
 
-### Standalone Signing Example
+### Type and field encoding
+
+The `SignQuote` typed-data is custom — **not** `eth_signTypedData_v4`. The indexer hand-rolls the digest. Every field is right-aligned in a 32-byte word:
+
+```
+SignQuote(
+  string  marketId,
+  uint64  rfqId,
+  address taker,
+  uint8   takerDirection,            // 0=long, 1=short
+  string  takerMargin,
+  string  takerQuantity,
+  address maker,
+  uint32  makerSubaccountNonce,
+  string  makerQuantity,
+  string  makerMargin,
+  string  price,
+  uint8   expiryKind,                // 0=timestamp_ms, 1=block_height
+  uint64  expiryValue,
+  string  minFillQuantity,           // "0" if absent
+  uint8   bindingKind                // hardcoded 1
+)
+```
+
+| Field type | Encoding |
+|---|---|
+| `string` and decimal fields | `keccak256(utf8(s))` |
+| `address` | 20 bytes from `bech32_to_evm`, left-padded to 32 bytes |
+| `uint8` / `uint32` / `uint64` | big-endian, right-aligned in 32 bytes |
+| `bindingKind` | always `1` (binding quote) |
+| `minFillQuantity` | `"0"` when absent — never empty string |
+
+The final digest is `keccak256(0x19 || 0x01 || domainSeparator || msgHash)`.
+
+### Decimal-as-string trap
+
+Decimals are hashed as the raw UTF-8 string. `"4.5"` and `"4.50"` produce different digests. The wire price MUST equal the signed price byte-for-byte:
+
+> **Correct order:** compute price → quantize to tick → sign → send (wire = signed)
+> **Wrong order:** compute price → sign → quantize → send  ← signature mismatch!
+
+### Use the library
 
 ```python
-import json
+from rfq_test.crypto.eip712 import sign_quote_v2
+
+signature = sign_quote_v2(
+    private_key=mm_private_key,
+    evm_chain_id=1439,                              # config.signing_context_v2[0]
+    verifying_contract_bech32="inj1qw7jk82h...",    # config.signing_context_v2[1]
+    market_id="0xdc70...",
+    rfq_id=int(rfq_id),
+    taker=taker_inj_addr,
+    direction="long",                               # or "short"
+    taker_margin="100",
+    taker_quantity="1",
+    maker=mm_inj_addr,
+    maker_margin="100",
+    maker_quantity="1",
+    price="4.5",                                    # quantized to tick beforehand
+    expiry_ms=int(time.time() * 1000) + 20_000,
+    maker_subaccount_nonce=0,
+    min_fill_quantity=None,
+)
+# Already prefixed with "0x"; pass through to MakerStream + REST as-is.
+```
+
+### Standalone v2 signing (no rfq-testing dep)
+
+If you can't import `rfq_test`, this is the byte-compatible reference (mirrors `service/rfq/signature/eip712.go` in `injective-indexer`):
+
+```python
+import bech32
 from eth_account import Account
 from eth_hash.auto import keccak
 
-def sign_quote(
-    private_key: str,
-    chain_id: str,
-    contract_address: str,
-    rfq_id: int,
-    market_id: str,
-    direction: str,           # "long" or "short"
-    taker: str,
-    taker_margin: str,
-    taker_quantity: str,
-    maker: str,
-    maker_margin: str,
-    maker_quantity: str,
-    price: str,
-    expiry: int,              # Unix timestamp in milliseconds
-    min_fill_quantity: str = None,     # optional V2 field
+EIP712_DOMAIN_TYPE = (
+    b"EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)"
+)
+SIGN_QUOTE_TYPE = (
+    b"SignQuote(string marketId,uint64 rfqId,address taker,uint8 takerDirection,"
+    b"string takerMargin,string takerQuantity,address maker,uint32 makerSubaccountNonce,"
+    b"string makerQuantity,string makerMargin,string price,uint8 expiryKind,"
+    b"uint64 expiryValue,string minFillQuantity,uint8 bindingKind)"
+)
+
+def bech32_to_evm(addr: str) -> bytes:
+    hrp, data = bech32.bech32_decode(addr)
+    assert hrp == "inj" and data is not None
+    raw = bech32.convertbits(data, 5, 8, False)
+    assert raw is not None and len(raw) == 20
+    return bytes(raw)
+
+def _u(n: int, width: int) -> bytes:        # right-aligned big-endian in 32 bytes
+    return b"\x00" * (32 - width) + n.to_bytes(width, "big")
+def _s(s: str) -> bytes: return keccak(s.encode("utf-8"))
+def _addr(a: bytes) -> bytes: return b"\x00" * 12 + a
+def _direction(d: str) -> int: return {"long": 0, "short": 1}[d.lower()]
+
+def domain_separator(evm_chain_id: int, contract_bech32: str) -> bytes:
+    return keccak(b"".join((
+        keccak(EIP712_DOMAIN_TYPE),
+        _s("RFQ"),
+        _s("1"),
+        _u(evm_chain_id, 8),
+        _addr(bech32_to_evm(contract_bech32)),
+    )))
+
+def sign_quote_v2(
+    *, private_key, evm_chain_id, verifying_contract_bech32,
+    market_id, rfq_id, taker, direction,
+    taker_margin, taker_quantity, maker, maker_subaccount_nonce,
+    maker_quantity, maker_margin, price, expiry_ms,
+    min_fill_quantity=None,
 ) -> str:
-    """Sign a quote. Returns hex signature (without 0x prefix).
-
-    Field order matches ws-client's canonical buildSignQuote:
-      c, ca, mi, id, t, td, tm, tq, m, mq, mm, p, e [, mfq]
-    Do NOT add an `ms` (maker_subaccount_nonce) field — the indexer's
-    legacy + v2 verifiers both reject payloads that include it.
-    """
-    payload = {
-        "c": chain_id,
-        "ca": contract_address,
-        "mi": market_id,
-        "id": rfq_id,
-        "t": taker,
-        "td": direction.lower(),
-        "tm": taker_margin,
-        "tq": taker_quantity,
-        "m": maker,
-        "mq": maker_quantity,
-        "mm": maker_margin,
-        "p": price,
-        "e": {"ts": expiry},
-    }
-    if min_fill_quantity is not None:
-        payload["mfq"] = min_fill_quantity   # append at end, only when needed
-
-    json_str = json.dumps(payload, separators=(",", ":"))
-    message_hash = keccak(json_str.encode("utf-8"))
-
-    if private_key.startswith("0x"):
-        private_key = private_key[2:]
-    account = Account.from_key(bytes.fromhex(private_key))
-    sig = account.unsafe_sign_hash(message_hash)
-    sig_bytes = sig.r.to_bytes(32, "big") + sig.s.to_bytes(32, "big") + bytes([sig.v])
-    return sig_bytes.hex()
+    msg = b"".join((
+        keccak(SIGN_QUOTE_TYPE),
+        _s(market_id), _u(int(rfq_id), 8),
+        _addr(bech32_to_evm(taker)), _u(_direction(direction), 1),
+        _s(str(taker_margin)), _s(str(taker_quantity)),
+        _addr(bech32_to_evm(maker)), _u(int(maker_subaccount_nonce), 4),
+        _s(str(maker_quantity)), _s(str(maker_margin)),
+        _s(str(price)),
+        _u(0, 1),  # expiryKind=timestamp
+        _u(int(expiry_ms), 8),
+        _s(str(min_fill_quantity) if min_fill_quantity is not None else "0"),
+        _u(1, 1),  # bindingKind
+    ))
+    digest = keccak(b"\x19\x01" + domain_separator(evm_chain_id, verifying_contract_bech32) + keccak(msg))
+    pk = bytes.fromhex(private_key.removeprefix("0x"))
+    sig = Account.from_key(pk).unsafe_sign_hash(digest)
+    v = sig.v if sig.v >= 27 else sig.v + 27
+    return "0x" + (sig.r.to_bytes(32, "big") + sig.s.to_bytes(32, "big") + bytes([v])).hex()
 ```
 
-### Price and Decimal Format
-
-- Use **human-readable decimal strings** (e.g. `"4.5"`, `"1.461"`). No trailing zeros — `"4.50"` and `"4.5"` produce different hashes.
-- Do **not** use 1e6-scaled integers.
-- The price in the signed payload must be **byte-for-byte identical** to the price you send in `AcceptQuote`. If they differ, signature verification fails.
+For block-height expiries pass `_u(1, 1)` (expiryKind=height) and the height as `expiryValue`.
 
 ### maker_subaccount_nonce
 
-`maker_subaccount_nonce` is the subaccount index used when your address was registered as a maker. If registration was done with the default subaccount (nonce 0), use `0`. Contact the platform operator if you are unsure what nonce was used.
+The subaccount index used when your address was registered as a maker. Default `0`. Contact the platform operator if you registered with a non-default nonce.
 
-### Signature for Indexer
+### Wire payload — `sign_mode` is required
 
-When sending a quote to the **indexer** (MakerStream), the indexer expects the signature in **hex with `0x` prefix**. If your signing function returns hex without `0x`, prepend it:
+Whatever path you use to send the quote (REST `/v1/quote`, MakerStream WS, or gRPC), include both the signature and the sign-mode literal:
 
 ```python
-sig_hex = sign_quote(...)
-if not sig_hex.startswith("0x"):
-    sig_hex = "0x" + sig_hex
-# Use sig_hex when building the quote for the indexer
+quote = {
+    # ...all the fields you signed above (chain_id/contract_address/market_id/etc)...
+    "signature": signature,
+    "sign_mode": "v2",
+}
+```
+
+If `sign_mode` is missing or empty the indexer responds:
+```
+ConnectionClosedError(Close(code=1011, reason='invalid request:
+  value of message.sign_mode must be one of "v1", "v2" but got value ""'))
 ```
 
 ---
@@ -285,23 +354,23 @@ Append `/TakerStream` or `/MakerStream` to the base URL.
 
 The indexer expects a specific field order for `RFQQuoteType`. If you encode in the wrong order, the indexer may reject with "rfq_id is required" or similar. Match the canonical order:
 
-| Field # | Name | Type |
-|---------|------|------|
-| 1 | chain_id | string |
-| 2 | contract_address | string |
-| 3 | market_id | string |
-| 4 | rfq_id | uint64 |
-| 5 | taker_direction | string |
-| 6 | margin | string |
-| 7 | quantity | string |
-| 8 | price | string |
-| 9 | expiry | RFQExpiryType (nested: timestamp, height) |
-| 10 | maker | string |
-| 11 | taker | string |
-| 12 | signature | string (hex with 0x) |
-| ... | (status, timestamps, etc.) | |
-
-The field table above is the canonical reference for quote encoding.
+| Field # | Name | Type | Notes |
+|---------|------|------|------|
+| 1 | chain_id | string | Wire-only — not bound by v2 signature |
+| 2 | contract_address | string | Wire-only — not bound by v2 signature |
+| 3 | market_id | string | |
+| 4 | rfq_id | uint64 | |
+| 5 | taker_direction | string | `"long"` or `"short"` |
+| 6 | margin | string | FPDecimal |
+| 7 | quantity | string | FPDecimal |
+| 8 | price | string | FPDecimal — must equal the signed price byte-for-byte |
+| 9 | expiry | RFQExpiryType | nested: `timestamp` (uint64 ms) or `height` (uint64) |
+| 10 | maker | string | |
+| 11 | taker | string | |
+| 12 | signature | string | hex with `0x`, 65 bytes (r‖s‖v) |
+| 19 | maker_subaccount_nonce | uint32 | included in v2 digest as `makerSubaccountNonce` |
+| 20 | min_fill_quantity | string | optional — included in v2 digest as `"0"` if absent |
+| 23 | **sign_mode** | string | **Required.** `"v2"` for everything this client signs. |
 
 ---
 
@@ -381,12 +450,15 @@ else:                     # taker sells → MM buys at lower price
 quantity = quantize_quantity(raw_quantity, qty_tick)
 
 # Now sign using these quantized strings — SAME strings sent in the proto message
-signature = sign_quote(
-    price=quote_price,      # ← quantized
-    maker_quantity=quantity, # ← quantized
+signature = sign_quote_v2(
+    price=quote_price,         # ← quantized, signed as keccak256(utf8(s))
+    maker_quantity=quantity,   # ← quantized
+    evm_chain_id=evm_chain_id,
+    verifying_contract_bech32=contract_address,
     ...
 )
 # Send quote_price and quantity unchanged in the RFQQuoteType proto message
+# along with sign_mode="v2".
 ```
 
 **If you don't use the helpers**, implement the quantization yourself:
@@ -445,110 +517,42 @@ The RFQ indexer monitors mark prices and triggers the order when the condition i
 
 | Field | Type | Description |
 |---|---|---|
-| `version` | int | Protocol version — use `1` |
-| `chain_id` | string | Chain ID (e.g. `"injective-888"`) |
-| `contract_address` | string | RFQ contract address |
+| `version` | uint8 | Protocol version — use `1` |
+| `chain_id` | string | Cosmos chain ID (wire-only — not bound by v2 signature) |
+| `contract_address` | string | RFQ contract address (wire-only — bound via the v2 domain separator) |
 | `taker` | string | Taker's Injective address |
-| `epoch` | int | Incremented by `CancelAllIntents`. Start at `1`; increment after each global cancel. |
-| `rfq_id` | int | Unique order ID — use current Unix timestamp in ms |
+| `epoch` | uint64 | Incremented by `CancelAllIntents`. Start at `1`; increment after each global cancel. |
+| `rfq_id` | uint64 | Unique order ID — use current Unix timestamp in ms |
 | `market_id` | string | Derivative market ID (0x hex) |
-| `subaccount_nonce` | int | Subaccount index (default `0`) |
-| `lane_version` | int | Incremented by `CancelIntentLane`. Start at `1`; increment after each per-market cancel. |
-| `deadline_ms` | int | Order expiry as Unix ms timestamp. Maximum 30 days from creation. |
+| `subaccount_nonce` | uint32 | Subaccount index (default `0`) |
+| `lane_version` | uint64 | Incremented by `CancelIntentLane`. Start at `1`; increment after each per-market cancel. |
+| `deadline_ms` | uint64 | Order expiry as Unix ms timestamp. Maximum 30 days from creation. |
 | `direction` | string | `"long"` or `"short"` |
 | `quantity` | string | Order quantity (FPDecimal) |
-| `margin` | string | Must be `"0"` for v1 — these are reduce-only (close-position) orders |
+| `margin` | string | Must be `"0"` for reduce-only (close-position) orders |
 | `worst_price` | string | Worst acceptable fill price |
 | `min_total_fill_quantity` | string | Minimum quantity that must be filled for the order to settle |
-| `trigger_type` | string | `"mark_price_gte"` or `"mark_price_lte"` |
-| `trigger_price` | string | Price threshold that triggers the order |
-| `unfilled_action` | string/null | Optional: action for any unfilled quantity after trigger |
-| `cid` | string/null | Optional client ID for tracking |
-| `allowed_relayer` | string/null | Optional: restrict which address can relay this order |
+| `trigger_type` | string | `"mark_price_gte"`, `"mark_price_lte"`, or `"immediate"` |
+| `trigger_price` | string | Price threshold (use `"0"` for `immediate`) |
+| `unfilled_action` | string/null | Optional — wire-only, **not** bound by the v2 signature |
+| `cid` | string/null | Optional client ID. Bound by the v2 signature. |
+| `allowed_relayer` | string/null | Optional. Bound by the v2 signature. |
+| `sign_mode` | string | **Required on the wire.** Use `"v2"`. |
 
-### Signing a Conditional Order
+### Signing a Conditional Order (v2)
 
-The canonical JSON field order is fixed — do not reorder. The `"trigger"` field is a **nested object** where the key is the trigger type and the value is the price string.
+`SignedTakerIntent` mirrors `SignQuote` — same domain separator, custom typed-data digest, secp256k1 sign of the digest. The wire `unfilled_action` field is **not** part of the digest (the indexer fixes `unfilledActionKind=0` and `unfilledActionPrice="0"` in the signed bytes), so post-trigger behaviour can change without invalidating the signature.
 
-```python
-import json
-import time
-from decimal import Decimal
-from eth_account import Account
-from eth_hash.auto import keccak
-
-def sign_conditional_order(
-    private_key: str,
-    version: int,
-    chain_id: str,
-    contract_address: str,
-    taker: str,
-    epoch: int,
-    rfq_id: int,
-    market_id: str,
-    subaccount_nonce: int,
-    lane_version: int,
-    deadline_ms: int,
-    direction: str,           # "long" or "short"
-    quantity: str,
-    worst_price: str,
-    min_total_fill_quantity: str,
-    trigger_type: str,        # "mark_price_gte" or "mark_price_lte"
-    trigger_price: str,
-    margin: str = "0",        # must be "0" for v1 orders
-    unfilled_action=None,
-    cid=None,
-    allowed_relayer=None,
-) -> str:
-    """Sign a conditional order. Returns "0x" + hex signature (65 bytes)."""
-    canonical = {
-        "version": version,
-        "chain_id": chain_id,
-        "contract_address": contract_address,
-        "taker": taker,
-        "epoch": epoch,
-        "rfq_id": rfq_id,
-        "market_id": market_id,
-        "subaccount_nonce": subaccount_nonce,
-        "lane_version": lane_version,
-        "deadline_ms": deadline_ms,
-        "direction": direction.lower(),
-        "quantity": quantity,
-        "margin": margin,
-        "worst_price": worst_price,
-        "min_total_fill_quantity": min_total_fill_quantity,
-        "trigger": {trigger_type: trigger_price},   # nested object, not flat fields
-        "unfilled_action": unfilled_action,
-        "cid": cid,
-        "allowed_relayer": allowed_relayer,
-    }
-    payload = json.dumps(canonical, separators=(",", ":"))
-    message_hash = keccak(payload.encode("utf-8"))
-
-    if private_key.startswith("0x"):
-        private_key = private_key[2:]
-    account = Account.from_key(bytes.fromhex(private_key))
-    sig = account.unsafe_sign_hash(message_hash)
-    sig_bytes = sig.r.to_bytes(32, "big") + sig.s.to_bytes(32, "big") + bytes([sig.v])
-    return "0x" + sig_bytes.hex()
-```
-
-### Submitting via TakerStream (WebSocket)
-
-Use `message_type = "conditional_order"` with the order in field 3 and signature in field 4. The server responds with a `conditional_order_ack` message.
+Use the library:
 
 ```python
-from rfq_test.clients.websocket import TakerStreamClient
-from rfq_test.crypto.signing import sign_conditional_order
+from rfq_test.crypto.eip712 import sign_conditional_order_v2
 
-rfq_id = int(time.time() * 1000)
-deadline_ms = rfq_id + 24 * 60 * 60 * 1000   # 24 hours from now
-
-signature = sign_conditional_order(
+signature = sign_conditional_order_v2(
     private_key=PRIVATE_KEY,
+    evm_chain_id=evm_chain_id,
+    verifying_contract_bech32=contract_address,
     version=1,
-    chain_id=CHAIN_ID,
-    contract_address=CONTRACT_ADDRESS,
     taker=taker_address,
     epoch=1,
     rfq_id=rfq_id,
@@ -558,15 +562,51 @@ signature = sign_conditional_order(
     deadline_ms=deadline_ms,
     direction="short",
     quantity="1",
+    margin="0",                       # reduce-only
     worst_price="132",
     min_total_fill_quantity="1",
-    trigger_type="mark_price_gte",
+    trigger_type="mark_price_gte",    # or "mark_price_lte" / "immediate"
     trigger_price="120",
-    margin="0",
+    cid=None,
+    allowed_relayer=None,
 )
+```
+
+The `SignedTakerIntent` typed-data layout (mirrors `eip712.go`):
+
+```
+SignedTakerIntent(
+  uint8   version,
+  address taker,
+  uint64  epoch,
+  uint64  rfqId,
+  string  marketId,
+  uint32  subaccountNonce,
+  uint64  laneVersion,
+  uint64  deadlineMs,
+  uint8   direction,                 // 0=long, 1=short
+  string  quantity,
+  string  margin,
+  string  worstPrice,
+  string  minTotalFillQuantity,
+  uint8   triggerKind,               // 0=immediate, 1=mark_price_gte, 2=mark_price_lte
+  string  triggerPrice,              // "0" for immediate
+  uint8   unfilledActionKind,        // hardcoded 0 (none)
+  string  unfilledActionPrice,       // hardcoded "0"
+  string  cid,                       // "" if null (still hashed)
+  address allowedRelayer             // zero-address if null
+)
+```
+
+### Submitting via TakerStream (WebSocket)
+
+Use `message_type = "conditional_order"` with the order in field 3, signature in field 4, **and `conditional_order_sign_mode = "v2"` in field 5** (required since 2026-04-29). The library's `send_conditional_order` defaults to `sign_mode="v2"`.
+
+```python
+from rfq_test.clients.websocket import TakerStreamClient
 
 order_body = {
-    "version": 1, "chain_id": CHAIN_ID, "contract_address": CONTRACT_ADDRESS,
+    "version": 1, "chain_id": chain_id, "contract_address": contract_address,
     "taker": taker_address, "epoch": 1, "rfq_id": rfq_id,
     "market_id": MARKET_ID, "subaccount_nonce": 0, "lane_version": 1,
     "deadline_ms": deadline_ms, "direction": "short",
@@ -579,23 +619,26 @@ order_body = {
 async with TakerStreamClient(ws_base_url, request_address=taker_address) as client:
     result = await client.send_conditional_order(
         order_body=order_body,
-        signature=signature,
+        signature=signature,           # from sign_conditional_order_v2 above
         wait_for_ack=True,
+        # sign_mode="v2" is the default
     )
     print(f"ACK: rfq_id={result['rfq_id']} status={result['status']}")
 ```
 
 ### Submitting via REST API
 
-As an alternative to the WebSocket stream, you can submit via HTTP:
-
 ```python
 import httpx
 
 async with httpx.AsyncClient() as http:
     resp = await http.post(
-        f"{indexer_http_endpoint}/conditionalOrder",
-        json={"order": order_body, "signature": signature},
+        f"{indexer_http_endpoint}/v1/conditionalOrder",
+        json={
+            "order": order_body,
+            "signature": signature,
+            "sign_mode": "v2",         # required — same string the digest expects
+        },
     )
     resp.raise_for_status()
     print(resp.json())
@@ -686,11 +729,12 @@ if code != 0:
 | Topic | Do | Don't |
 |-------|----|-------|
 | **Grants** | Use gas heuristics; both MsgSend + MsgPrivilegedExecuteContract for MM and Retail; expiration: null; GenericAuthorization | Use simulation for grants; use SendAuthorization; grant only MsgSend for Retail |
-| **Signing** | Field order `c, ca, mi, id, t, td, tm, tq, m, ms, mq, mm, p, e`; include `ms` (maker_subaccount_nonce); keccak256; lowercase direction; quantize price before signing | Omit `ms`; use old field order without `ms`; use sort_keys; sign unquantized price |
-| **Indexer** | request_address header for TakerStream; maker_address + optional subscription headers for MakerStream; "long"/"short"; signature with 0x prefix; include maker_subaccount_nonce + min_fill_quantity in quote proto | Use numeric direction; omit required headers; skip new proto fields 19/20 |
-| **Contract** | FPDecimal strings; worst_price within 10% of mark; prices quantized to min_price_tick_size before signing; check tx_response.code | Use 1e6 integers; ignore tick sizes; sign then quantize; assume tx success from hash only |
-| **Errors** | Check code == 0; read rawLog on failure | Assume success from tx hash |
-| **Conditional Orders** | Sign with exact field order; use `"trigger": {type: price}` nested object; `margin="0"` for v1; track epoch and lane_version | Flat trigger fields; non-zero margin; reuse stale epoch/lane_version after cancel |
+| **v2 Signing** | Use `sign_quote_v2` / `sign_conditional_order_v2`; bind via EIP-712 domain (chainId=1439 devnet+testnet, verifyingContract = bech32→evm); quantize prices BEFORE signing (decimals are hashed as `keccak256(utf8(s))`); lowercase direction | Use raw-JSON v1; reorder fields; sign unquantized prices; build `eth_signTypedData_v4` payloads (it's a custom typed-data layout) |
+| **Wire payload** | Set `sign_mode: "v2"` on every quote and conditional order; include `maker_subaccount_nonce` + `min_fill_quantity` exactly as signed; signature with `0x` prefix | Omit `sign_mode` (indexer rejects empty values); send a different price/qty than you signed |
+| **Indexer** | `request_address` header for TakerStream; `maker_address` + optional subscription headers for MakerStream; `"long"`/`"short"` strings | Use numeric direction; omit required headers |
+| **Contract** | FPDecimal strings; worst_price within 10% of mark; prices quantized to `min_price_tick_size` before signing; check `tx_response.code` | Use 1e6 integers; ignore tick sizes; sign then quantize; assume tx success from hash only |
+| **Errors** | Check `code == 0`; read `rawLog` on failure; recognise `value of message.sign_mode must be one of "v1", "v2"` as a missing-`sign_mode` bug in your client | Assume success from tx hash |
+| **Conditional Orders** | Use `sign_conditional_order_v2`; `margin="0"` for reduce-only; track `epoch` / `lane_version`; pass `sign_mode="v2"` (default) on TakerStream + REST; `unfilled_action` is wire-only (not in digest) | Flat trigger fields; non-zero margin; reuse stale `epoch`/`lane_version` after cancel; assume `unfilled_action` is signed |
 
 ---
 

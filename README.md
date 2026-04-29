@@ -70,6 +70,9 @@ cp .env.example .env
 
 Set the environment:
 ```bash
+# Devnet has the latest contract + indexer (EIP-712 v2 lives here first)
+export RFQ_ENV=devnet
+# or
 export RFQ_ENV=testnet
 ```
 
@@ -102,16 +105,20 @@ python examples/test_roundtrip.py
 python examples/test_settlement.py
 ```
 
-## Testnet Configuration
+## Environment Configuration
 
-| Item | Value |
-|------|-------|
-| Chain ID | `injective-888` |
-| RFQ Contract | `inj1qw7jk82hjvf79tnjykux6zacuh9gl0z0wl3ruk` (`0.1.0-alpha.6`) |
-| MakerStream WSS | `wss://testnet.rfq.ws.injective.network/injective_rfq_rpc.InjectiveRfqRPC/MakerStream` |
-| TakerStream WSS | `wss://testnet.rfq.ws.injective.network/injective_rfq_rpc.InjectiveRfqRPC/TakerStream` |
-| Chain gRPC | `testnet-grpc.injective.dev:443` |
-| Faucet | `https://testnet-faucet.injective.dev` |
+| Item | Devnet | Testnet |
+|------|--------|---------|
+| Cosmos chain ID | `injective-777` | `injective-888` |
+| EVM chain ID (EIP-712 domain) | `1439` | `1439` |
+| RFQ Contract | `inj19g43wyj843ydkc845dcdea6su4mgfjwnpjz6h5` | `inj1qw7jk82hjvf79tnjykux6zacuh9gl0z0wl3ruk` |
+| MakerStream WSS | `wss://devnet.rfq.ws.injective.dev/.../MakerStream` | `wss://testnet.rfq.ws.injective.network/.../MakerStream` |
+| TakerStream WSS | `wss://devnet.rfq.ws.injective.dev/.../TakerStream` | `wss://testnet.rfq.ws.injective.network/.../TakerStream` |
+| HTTP / Swagger | `https://devnet.api.injective.dev/swagger/` | `https://testnet.rfq.injective.network` |
+| Chain gRPC | `devnet.injective.dev:9900` | `testnet-grpc.injective.dev:443` |
+| Faucet | n/a | `https://testnet-faucet.injective.dev` |
+
+> **Devnet runs ahead.** New SC + indexer changes (currently the EIP-712 v2 signing path) land on devnet first. Testnet typically picks up the same code within a release cycle. Mainnet will use EVM chain ID `1776`.
 
 ## Protocol
 
@@ -120,7 +127,7 @@ The RFQ Indexer uses **gRPC-web over WebSocket** with protobuf framing:
 - **Subprotocol:** `grpc-ws`
 - **Framing:** `[1 byte flags][4 bytes length BE][protobuf payload]`
 - **Keep-alive:** Send `ping` message every 1 second
-- **Signing:** `keccak256(canonical_json) → secp256k1_sign` (raw hash, NO EIP-191 prefix)
+- **Signing:** EIP-712 v2 (`SignQuote` / `SignedTakerIntent` typed-data digest → secp256k1 sign). Every quote and conditional order must carry `sign_mode: "v2"` — the indexer rejects empty values with `value of message.sign_mode must be one of "v1", "v2"`. v1 (raw-JSON keccak256) still exists in the contract / indexer for legacy clients but the rfq-testing repo signs v2 only. Spec lives in [`src/rfq_test/crypto/eip712.py`](src/rfq_test/crypto/eip712.py); the Go reference is in `injective-indexer` at `service/rfq/signature/eip712.go`.
 
 ### Maker Update Subscriptions
 
@@ -154,7 +161,7 @@ mm_client = MakerStreamClient(
 )
 ```
 
-> **Quote signing note:** The signed JSON payload field order is `c, ca, mi, id, t, td, tm, tq, m, mq, mm, p, e [, mfq]` — matching the upstream [ws-client `verify-signature.js`](https://github.com/InjectiveLabs/ws-client/blob/main/rfq-tests/signature/verify-signature.js) canonical spec. **Do not include `"ms"` (maker_subaccount_nonce)** — the indexer's legacy + v2 verifiers both reject payloads containing it. See [PYTHON_BUILDING_GUIDE.md](PYTHON_BUILDING_GUIDE.md#quote-signing) for the full field order.
+> **Quote signing note (v2 EIP-712):** Build the `SignQuote` typed-data digest (chainId / verifyingContract bound by the domain separator) and sign it with secp256k1 raw — no EIP-191 prefix, no JSON canonicalisation. Decimal fields are encoded as `keccak256(utf8(s))`, so the wire price MUST equal the signed price byte-for-byte (quantize to the market tick BEFORE signing). See [PYTHON_BUILDING_GUIDE.md — Quote Signing (v2)](PYTHON_BUILDING_GUIDE.md#quote-signing-v2) for the full recipe and `src/rfq_test/crypto/eip712.py` for the byte-compatible Python implementation.
 
 ### Conditional Orders (TP/SL)
 
