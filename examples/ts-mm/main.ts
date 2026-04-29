@@ -1,27 +1,24 @@
 /**
- * !!! v1 SIGNING — NEEDS PORT TO v2 (EIP-712) !!!
- * The indexer requires `sign_mode` ("v1" or "v2") on every quote as of
- * 2026-04-29. The rfq-testing standard is v2. This file's signing helper
- * still produces v1. Canonical v2 reference:
- *   - src/rfq_test/crypto/eip712.py    (Python — byte-compat with indexer)
- *   - PYTHON_BUILDING_GUIDE.md
- *   - https://rfq.inj.so/onboarding.html#sign  (TS recipe)
+ * RFQ – Market Maker Main Flow (v2 EIP-712 signing)
  *
- * RFQ – Market Maker Main Flow
+ * Wire payloads MUST carry `sign_mode: "v2"` — empty values are rejected
+ * with `value of message.sign_mode must be one of "v1", "v2"`. Full spec:
+ * PYTHON_BUILDING_GUIDE.md and rfq.inj.so/onboarding.html#sign.
  *
  * Flow:
  * 0. MM has already granted permissions to RFQ contract
  * 1. MM connects to WebSocket & subscribes to RFQ requests
  * 2. MM receives RFQ request from retail
  * 3. MM builds quotes
- * 4. MM signs quotes
- * 5. MM sends quotes back via WebSocket
+ * 4. MM signs quotes (v2 EIP-712, see signQuoteV2 in eip712.ts)
+ * 5. MM sends quotes back via WebSocket with sign_mode="v2"
  */
 
 import WebSocket from "ws";
 import dotenv from "dotenv";
-import { ethers, keccak256, toUtf8Bytes } from "ethers";
 import { PrivateKey } from "@injectivelabs/sdk-ts";
+
+import { signQuoteV2 } from "./eip712.js";
 
 dotenv.config();
 
@@ -36,6 +33,7 @@ const WS_URL = "ws://localhost:4464/ws";
 const MM_PRIVATE_KEY = process.env.MM_PRIVATE_KEY!;
 const CHAIN_ID = process.env.CHAIN_ID!;
 const CONTRACT_ADDRESS = process.env.CONTRACT_ADDRESS!;
+const EVM_CHAIN_ID = Number(process.env.EVM_CHAIN_ID ?? "1439"); // 1439 testnet, 1776 mainnet
 
 // Derive maker address from private key
 const MAKER_ADDRESS = PrivateKey.fromHex(
@@ -70,33 +68,18 @@ interface RfqRequest {
 interface Quote {
   market_id: string;
   rfq_id: number;
-  taker_direction: number; // Assuming Direction is an enum: 0 = 'LONG' | 1 = 'SHORT'
-  margin: string; // FPDecimal as string
-  quantity: string; // FPDecimal as string
-  price: string; // FPDecimal as string
-  expiry: number; // timestamp, use string if large uint64
-  maker?: string; // optional
-  taker?: string; // optional
+  taker_direction: "long" | "short";
+  margin: string;          // FPDecimal as string — must equal what was signed
+  quantity: string;        // FPDecimal as string — must equal what was signed
+  price: string;           // FPDecimal as string — must equal what was signed
+  expiry: number;          // unix ms
+  maker?: string;
+  taker?: string;
   signature: string;
-  chain_id: string,
-  contract_address: string,
-}
-
-// Interface for SignQuote matching Contract struct
-interface SignQuote {
-  c: string,
-  ca: string,
-  mi: string;  // market_id
-  id: number;  // rfq_id
-  t: string;   // taker address
-  td: string;  // taker_direction (0 = LONG, 1 = SHORT)
-  tm: string;  // taker_margin (FPDecimal as string)
-  tq: string;  // taker_quantity (FPDecimal as string)
-  m: string;   // maker address
-  mq: string;  // maker_quantity (FPDecimal as string)
-  mm: string;  // maker_margin (FPDecimal as string)
-  p: string;   // price (FPDecimal as string)
-  e: number;  // expiry
+  sign_mode: "v2";         // required by indexer
+  chain_id: string;
+  contract_address: string;
+  maker_subaccount_nonce: number;
 }
 
 /* -------------------------------------------------------------------------- */
@@ -110,48 +93,7 @@ let mmWs: WebSocket | null = null;
 /* -------------------------------------------------------------------------- */
 
 /**
- * Convert Quote → SignQuote (compact & deterministic)
- */
-function toSignQuote(request: RfqRequest, quote: Quote): SignQuote {
-  return {
-    c: CHAIN_ID,
-    ca: CONTRACT_ADDRESS,
-    mi: quote.market_id,  // market_id
-    id: quote.rfq_id,     // rfq_id
-    t: request.request_address,  // taker address
-    td: !request.direction ? "long" : "short",  // taker_direction from request
-    tm: request.margin,  // taker_margin from request
-    tq: request.quantity,  // taker_quantity from request
-    m: quote.maker || '',  // maker address (required in SignQuote)
-    mq: quote.quantity,  // maker_quantity from quote
-    mm: quote.margin,  // maker_margin from quote
-    p: quote.price,  // price from quote
-    e: quote.expiry,  // expiry from quote
-  };
-}
-
-/**
- * Step 4: Sign quote with MM private key
- */
-async function signQuote(
-  signQuote: SignQuote,
-  privateKeyHex: string
-): Promise<string> {
-  const payload = JSON.stringify(signQuote);
-  const hash = keccak256(toUtf8Bytes(payload));
-
-  console.log('signed payload:', payload)
-
-  const signingKey = new ethers.SigningKey(
-    Buffer.from(privateKeyHex.replace(/^0x/, ""), "hex")
-  );
-
-  const sig = signingKey.sign(hash);
-  return ethers.Signature.from(sig).serialized;
-}
-
-/**
- * Step 3 → 5: Build, sign, and send quote
+ * Step 3 → 5: Build, sign (v2 EIP-712), and send quote
  */
 async function sendQuote(
   ws: WebSocket,
@@ -159,26 +101,44 @@ async function sendQuote(
   price: number
 ) {
   const expiry = Date.now() + 20_000; // 20s validity
+  const direction: "long" | "short" = request.direction === 0 ? "long" : "short";
+  const priceStr = price.toString();
+  const makerSubaccountNonce = 0;
+
+  const signature = signQuoteV2({
+    privateKey: MM_PRIVATE_KEY,
+    evmChainId: EVM_CHAIN_ID,
+    contractAddress: CONTRACT_ADDRESS,
+    marketId: request.market_id,
+    rfqId: request.rfq_id,
+    taker: request.request_address,
+    direction,
+    takerMargin: request.margin,
+    takerQuantity: request.quantity,
+    maker: MAKER_ADDRESS,
+    makerSubaccountNonce,
+    makerQuantity: request.quantity,
+    makerMargin: request.margin,
+    price: priceStr,
+    expiryMs: expiry,
+  });
 
   const quote: Quote = {
     chain_id: CHAIN_ID,
     contract_address: CONTRACT_ADDRESS,
     rfq_id: request.rfq_id,
     market_id: request.market_id,
-    taker_direction: request.direction,
-    margin: request.margin, // use same margin as taker, MM can choose how much margin to put in
+    taker_direction: direction,
+    margin: request.margin,
     quantity: request.quantity,
-    price: price.toString(),
+    price: priceStr,
     expiry,
     maker: MAKER_ADDRESS,
-    taker: request.request_address, // ✅ from RFQ request
-    signature: "", // assign later
+    taker: request.request_address,
+    signature,
+    sign_mode: "v2",
+    maker_subaccount_nonce: makerSubaccountNonce,
   };
-
-  quote.signature = await signQuote(
-    toSignQuote(request, quote),
-    MM_PRIVATE_KEY
-  );
 
   const message = {
     jsonrpc: "2.0",

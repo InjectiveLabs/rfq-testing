@@ -1,19 +1,18 @@
 /**
- * !!! v1 SIGNING — NEEDS PORT TO v2 (EIP-712) !!!
- * As of 2026-04-29 the indexer rejects empty `sign_mode`. The rfq-testing
- * standard is v2. Canonical v2 reference: src/rfq_test/crypto/eip712.py +
- * PYTHON_BUILDING_GUIDE.md.
- *
- * RFQ – Market Maker Main Flow (gRPC)
+ * RFQ – Market Maker Main Flow (gRPC, v2 EIP-712 signing)
  *
  * Uses native gRPC MakerStream (bidirectional) instead of WebSocket.
+ *
+ * Wire payloads MUST carry `sign_mode: "v2"` — empty values are rejected
+ * with `value of message.sign_mode must be one of "v1", "v2"`. The full
+ * spec lives in PYTHON_BUILDING_GUIDE.md and rfq.inj.so/onboarding.html#sign.
  *
  * Flow:
  * 0. MM has already granted permissions to RFQ contract (see setup.ts)
  * 1. MM connects to gRPC MakerStream with maker metadata
  * 2. MM receives RFQ requests from the stream
- * 3. MM builds and signs quotes
- * 4. MM sends quotes back via the same stream
+ * 3. MM builds and signs quotes (v2 EIP-712, see signQuoteV2 in eip712.ts)
+ * 4. MM sends quotes back via the same stream with sign_mode="v2"
  * 5. MM receives quote_ack, quote_update, settlement_update events
  */
 
@@ -22,8 +21,9 @@ import * as protoLoader from "@grpc/proto-loader";
 import path from "path";
 import { fileURLToPath } from "url";
 import dotenv from "dotenv";
-import { ethers, keccak256, toUtf8Bytes } from "ethers";
 import { PrivateKey } from "@injectivelabs/sdk-ts";
+
+import { signQuoteV2 } from "./eip712.js";
 
 dotenv.config();
 
@@ -58,6 +58,7 @@ const GRPC_ENDPOINT = process.env.GRPC_ENDPOINT!;
 const MM_PRIVATE_KEY = process.env.MM_PRIVATE_KEY!;
 const CHAIN_ID = process.env.CHAIN_ID!;
 const CONTRACT_ADDRESS = process.env.CONTRACT_ADDRESS!;
+const EVM_CHAIN_ID = Number(process.env.EVM_CHAIN_ID ?? "1439"); // 1439 testnet, 1776 mainnet
 
 const MAKER_ADDRESS = PrivateKey.fromHex(
   MM_PRIVATE_KEY.replace(/^0x/, "")
@@ -73,59 +74,6 @@ if (!CHAIN_ID) throw new Error("CHAIN_ID is not set");
 if (!CONTRACT_ADDRESS) throw new Error("CONTRACT_ADDRESS is not set");
 
 /* -------------------------------------------------------------------------- */
-/*                          QUOTE / SIGNING LOGIC                             */
-/* -------------------------------------------------------------------------- */
-
-/**
- * Build the compact sign payload that matches the contract's SignQuote struct.
- *
- * Field order: c, ca, mi, id, t, td, tm, tq, m, ms, mq, mm, p, e[, mfq]
- */
-function buildSignPayload(
-  request: any,
-  price: string,
-  expiry: number,
-  makerSubaccountNonce: number = 0,
-  minFillQuantity?: string
-): Record<string, unknown> {
-  const payload: Record<string, unknown> = {
-    c: CHAIN_ID,
-    ca: CONTRACT_ADDRESS,
-    mi: request.market_id,
-    id: Number(request.rfq_id),
-    t: request.request_address,
-    td: request.direction === "short" ? "short" : "long",
-    tm: request.margin,
-    tq: request.quantity,
-    m: MAKER_ADDRESS,
-    ms: makerSubaccountNonce,
-    mq: request.quantity,
-    mm: request.margin,
-    p: price,
-    e: { ts: expiry },
-  };
-  if (minFillQuantity != null) {
-    payload.mfq = minFillQuantity;
-  }
-  return payload;
-}
-
-function signPayload(
-  payload: Record<string, unknown>,
-  privateKeyHex: string
-): string {
-  const json = JSON.stringify(payload);
-  console.log("signed payload:", json);
-
-  const hash = keccak256(toUtf8Bytes(json));
-  const signingKey = new ethers.SigningKey(
-    Buffer.from(privateKeyHex.replace(/^0x/, ""), "hex")
-  );
-  const sig = signingKey.sign(hash);
-  return ethers.Signature.from(sig).serialized;
-}
-
-/* -------------------------------------------------------------------------- */
 /*                              GRPC STREAM                                   */
 /* -------------------------------------------------------------------------- */
 
@@ -135,16 +83,32 @@ function sendQuote(stream: grpc.ClientDuplexStream<any, any>, request: any, pric
   const expiry = Date.now() + 20_000; // 20s validity
   const priceStr = price.toString();
   const makerSubaccountNonce = 0;
+  const direction: "long" | "short" = request.direction === "short" ? "short" : "long";
 
-  const payload = buildSignPayload(request, priceStr, expiry, makerSubaccountNonce);
-  const signature = signPayload(payload, MM_PRIVATE_KEY);
+  const signature = signQuoteV2({
+    privateKey: MM_PRIVATE_KEY,
+    evmChainId: EVM_CHAIN_ID,
+    contractAddress: CONTRACT_ADDRESS,
+    marketId: request.market_id,
+    rfqId: Number(request.rfq_id),
+    taker: request.request_address,
+    direction,
+    takerMargin: request.margin,
+    takerQuantity: request.quantity,
+    maker: MAKER_ADDRESS,
+    makerSubaccountNonce,
+    makerQuantity: request.quantity,
+    makerMargin: request.margin,
+    price: priceStr,
+    expiryMs: expiry,
+  });
 
   const quote = {
     chain_id: CHAIN_ID,
     contract_address: CONTRACT_ADDRESS,
     rfq_id: Number(request.rfq_id),
     market_id: request.market_id,
-    taker_direction: request.direction === "short" ? "short" : "long",
+    taker_direction: direction,
     margin: request.margin,
     quantity: request.quantity,
     price: priceStr,
@@ -152,6 +116,7 @@ function sendQuote(stream: grpc.ClientDuplexStream<any, any>, request: any, pric
     maker: MAKER_ADDRESS,
     taker: request.request_address,
     signature,
+    sign_mode: "v2",                       // required by indexer
     maker_subaccount_nonce: makerSubaccountNonce,
   };
 
