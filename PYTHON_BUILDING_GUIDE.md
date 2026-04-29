@@ -135,7 +135,7 @@ for msg_type in MSG_TYPES:
 
 ## Quote Signing (v2)
 
-The rfq-testing repo standard is **EIP-712 v2** signing. v1 (raw-JSON keccak256) still exists in the indexer/contract for legacy clients but is not documented here. As of the 2026-04-29 devnet deploy, every quote and conditional order MUST carry `sign_mode: "v2"` on the wire — empty values are rejected with `value of message.sign_mode must be one of "v1", "v2"`.
+The rfq-testing repo standard is **EIP-712 v2** signing. v1 (raw-JSON keccak256) still exists in the indexer/contract for legacy clients but is not documented here. Every quote and conditional order MUST carry `sign_mode: "v2"` on the wire — empty values are rejected with `value of message.sign_mode must be one of "v1", "v2"`.
 
 > **TL;DR:** Build the `SignQuote` typed-data digest, sign it with secp256k1 raw (no EIP-191 prefix), prepend `0x` to the signature, and put `sign_mode: "v2"` in the wire payload.
 
@@ -147,12 +147,12 @@ The signature does NOT bind the wire fields `chain_id` / `contract_address`. Tho
 domain = EIP712Domain(
   name              = "RFQ",
   version           = "1",
-  chainId           = <EVM chain ID>,            # 1439 for devnet+testnet
+  chainId           = <EVM chain ID>,            # 1439 testnet, 1776 mainnet
   verifyingContract = <bech32_to_evm(contract)>, # 20-byte hex of the bech32 address
 )
 ```
 
-EVM chain ID `1439` covers both devnet and testnet today; mainnet will be `1776`.
+EVM chain ID is `1439` on testnet and `1776` on mainnet — bake it into your config, don't hardcode.
 
 ### Type and field encoding
 
@@ -729,7 +729,7 @@ if code != 0:
 | Topic | Do | Don't |
 |-------|----|-------|
 | **Grants** | Use gas heuristics; both MsgSend + MsgPrivilegedExecuteContract for MM and Retail; expiration: null; GenericAuthorization | Use simulation for grants; use SendAuthorization; grant only MsgSend for Retail |
-| **v2 Signing** | Use `sign_quote_v2` / `sign_conditional_order_v2`; bind via EIP-712 domain (chainId=1439 devnet+testnet, verifyingContract = bech32→evm); quantize prices BEFORE signing (decimals are hashed as `keccak256(utf8(s))`); lowercase direction | Use raw-JSON v1; reorder fields; sign unquantized prices; build `eth_signTypedData_v4` payloads (it's a custom typed-data layout) |
+| **v2 Signing** | Use `sign_quote_v2` / `sign_conditional_order_v2`; bind via EIP-712 domain (chainId=1439 testnet, 1776 mainnet, verifyingContract = bech32→evm); quantize prices BEFORE signing (decimals are hashed as `keccak256(utf8(s))`); lowercase direction | Use raw-JSON v1; reorder fields; sign unquantized prices; build `eth_signTypedData_v4` payloads (it's a custom typed-data layout) |
 | **Wire payload** | Set `sign_mode: "v2"` on every quote and conditional order; include `maker_subaccount_nonce` + `min_fill_quantity` exactly as signed; signature with `0x` prefix | Omit `sign_mode` (indexer rejects empty values); send a different price/qty than you signed |
 | **Indexer** | `request_address` header for TakerStream; `maker_address` + optional subscription headers for MakerStream; `"long"`/`"short"` strings | Use numeric direction; omit required headers |
 | **Contract** | FPDecimal strings; worst_price within 10% of mark; prices quantized to `min_price_tick_size` before signing; check `tx_response.code` | Use 1e6 integers; ignore tick sizes; sign then quantize; assume tx success from hash only |

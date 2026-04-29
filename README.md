@@ -70,9 +70,6 @@ cp .env.example .env
 
 Set the environment:
 ```bash
-# Devnet has the latest contract + indexer (EIP-712 v2 lives here first)
-export RFQ_ENV=devnet
-# or
 export RFQ_ENV=testnet
 ```
 
@@ -107,18 +104,15 @@ python examples/test_settlement.py
 
 ## Environment Configuration
 
-| Item | Devnet | Testnet |
-|------|--------|---------|
-| Cosmos chain ID | `injective-777` | `injective-888` |
-| EVM chain ID (EIP-712 domain) | `1439` | `1439` |
-| RFQ Contract | `inj19g43wyj843ydkc845dcdea6su4mgfjwnpjz6h5` | `inj1qw7jk82hjvf79tnjykux6zacuh9gl0z0wl3ruk` |
-| MakerStream WSS | `wss://devnet.rfq.ws.injective.dev/.../MakerStream` | `wss://testnet.rfq.ws.injective.network/.../MakerStream` |
-| TakerStream WSS | `wss://devnet.rfq.ws.injective.dev/.../TakerStream` | `wss://testnet.rfq.ws.injective.network/.../TakerStream` |
-| HTTP / Swagger | `https://devnet.api.injective.dev/swagger/` | `https://testnet.rfq.injective.network` |
-| Chain gRPC | `devnet.injective.dev:9900` | `testnet-grpc.injective.dev:443` |
-| Faucet | n/a | `https://testnet-faucet.injective.dev` |
-
-> **Devnet runs ahead.** New SC + indexer changes (currently the EIP-712 v2 signing path) land on devnet first. Testnet typically picks up the same code within a release cycle. Mainnet will use EVM chain ID `1776`.
+| Item | Testnet | Mainnet |
+|------|---------|---------|
+| Cosmos chain ID | `injective-888` | `injective-1` |
+| EVM chain ID (EIP-712 domain) | `1439` | `1776` |
+| RFQ Contract | `inj1qw7jk82hjvf79tnjykux6zacuh9gl0z0wl3ruk` | _TBA_ |
+| MakerStream WSS | `wss://testnet.rfq.ws.injective.network/injective_rfq_rpc.InjectiveRfqRPC/MakerStream` | _TBA_ |
+| TakerStream WSS | `wss://testnet.rfq.ws.injective.network/injective_rfq_rpc.InjectiveRfqRPC/TakerStream` | _TBA_ |
+| Chain gRPC | `testnet-grpc.injective.dev:443` | `sentry.chain.grpc.injective.network:443` |
+| Faucet | `https://testnet-faucet.injective.dev` | n/a |
 
 ## Protocol
 
