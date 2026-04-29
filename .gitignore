@@ -72,4 +72,13 @@ configs/wallets_*.yaml
 reference/
 
 # LLM
-.claude
+.claude.slack-reply*.md
+.docs-pdf-handoff*.md
+
+# Node (TS examples)
+node_modules/
+examples/node_modules/
+examples/package-lock.json
+
+# Local agent dir
+.claude/
