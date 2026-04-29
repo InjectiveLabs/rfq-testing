@@ -1,10 +1,12 @@
 /**
- * !!! v1 SIGNING — NEEDS PORT TO v2 (EIP-712) !!!
- * As of 2026-04-29 the indexer rejects empty `sign_mode`. The rfq-testing
- * standard is v2. Canonical v2 reference: src/rfq_test/crypto/eip712.py +
- * PYTHON_BUILDING_GUIDE.md.
- *
  * RFQ – Retail User Main Flow
+ *
+ * Retail doesn't sign quotes — it consumes the MM's signature and forwards
+ * it to the on-chain `accept_quote`. As of 2026-04-29 the wire RFQQuoteType
+ * carries a new `sign_mode` field ("v1" or "v2" — see Onboarding §06 for
+ * spec). This script preserves `sign_mode` from the indexer-delivered quote
+ * onto the AcceptQuote payload so the contract picks the right verifier.
+ * If you omit it, the contract falls back to `"auto"` (tries v2, then v1).
  *
  * Flow:
  * 0. Retail user has already granted permissions to RFQ contract
@@ -112,6 +114,7 @@ interface Quote {
   expiry: Expiry;
   signature: string; // Binary is typically base64 or hex encoded string
   nonce: number | undefined;
+  sign_mode?: "v1" | "v2" | "auto"; // forwarded from the indexer; contract defaults to "auto"
 }
 
 interface Settlement {
@@ -357,6 +360,7 @@ retailWs.on("message", (data) => {
     expiry: quote.expiry,
     signature: Buffer.from(quote.signature.replace('0x', ''), 'hex').toString('base64'),
     nonce: undefined,
+    sign_mode: quote.sign_mode ?? "v2",   // forward MM's sign_mode; default to v2
   }
 
   if (quote.nonce) {

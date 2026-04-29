@@ -1,10 +1,9 @@
 /**
- * !!! v1 SIGNING — NEEDS PORT TO v2 (EIP-712) !!!
- * As of 2026-04-29 the indexer rejects empty `sign_mode`. v2 is the
- * rfq-testing standard. Canonical v2 reference:
- * src/rfq_test/crypto/eip712.py + PYTHON_BUILDING_GUIDE.md.
- *
  * RFQ – Retail User Main Flow (gRPC)
+ *
+ * Retail doesn't sign quotes — it forwards the MM's signature to AcceptQuote.
+ * The wire RFQQuoteType now carries `sign_mode` ("v1" or "v2"); this script
+ * propagates whatever the MM set onto the on-chain AcceptQuote payload.
  *
  * Uses native gRPC APIs instead of WebSocket.
  *
@@ -116,6 +115,7 @@ interface CollectedQuote {
   expiry: { ts?: number; h?: number };
   signature: string;
   nonce?: number;
+  sign_mode?: "v1" | "v2" | "auto";
 }
 
 /* -------------------------------------------------------------------------- */
@@ -160,7 +160,9 @@ async function acceptQuote(
 ) {
   console.log("\n📌 Accepting quotes on-chain...");
 
-  // Convert signatures from hex to base64 for the contract
+  // Convert signatures from hex to base64 for the contract.
+  // sign_mode is forwarded so the contract picks the right verifier
+  // (defaults to "auto" if absent — tries v2, then v1).
   const contractQuotes = quotes.map((q) => ({
     maker: q.maker,
     margin: q.margin,
@@ -171,6 +173,7 @@ async function acceptQuote(
       q.signature.replace("0x", ""),
       "hex"
     ).toString("base64"),
+    sign_mode: q.sign_mode ?? "v2",
   }));
 
   const action = {
@@ -255,6 +258,7 @@ async function main() {
       quantity: q.quantity,
       expiry: { ts: expiryTs, h: expiryH },
       signature: q.signature,
+      sign_mode: q.sign_mode,
       nonce: q.maker_subaccount_nonce
         ? Number(q.maker_subaccount_nonce)
         : undefined,

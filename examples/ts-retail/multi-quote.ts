@@ -1,10 +1,10 @@
 /**
- * !!! v1 SIGNING — NEEDS PORT TO v2 (EIP-712) !!!
- * As of 2026-04-29 the indexer rejects empty `sign_mode`. v2 is the
- * rfq-testing standard. Canonical v2 reference:
- * src/rfq_test/crypto/eip712.py + PYTHON_BUILDING_GUIDE.md.
- *
  * RFQ Taker — Multi-Quote Aggregation Example
+ *
+ * Retail forwards MM signatures to AcceptQuote — it doesn't sign anything
+ * itself. The wire RFQQuoteType now carries `sign_mode` ("v1" or "v2");
+ * this script propagates whatever the MM set onto each ContractQuote so
+ * the contract picks the right verifier per quote (defaults to "auto").
  *
  * Demonstrates accepting multiple quotes from different makers in a single
  * AcceptQuote transaction. The contract's `quotes` field is a Vec<Quote>
@@ -79,6 +79,7 @@ interface IndexerQuote {
   price: string;
   expiry: number | string; // Unix ms; cast defensively before use
   signature: string; // hex with 0x prefix, as delivered by the indexer
+  sign_mode?: "v1" | "v2" | "auto";
   status?: string;
 }
 
@@ -89,6 +90,7 @@ interface ContractQuote {
   price: string;
   expiry: { ts: number }; // wrapped enum
   signature: string; // base64
+  sign_mode?: "v1" | "v2" | "auto"; // contract defaults to "auto" if absent
 }
 
 /* -------------------------------------------------------------------------- */
@@ -148,6 +150,7 @@ function toContractQuote(q: IndexerQuote): ContractQuote {
     price: q.price,
     expiry: { ts: Number(q.expiry) },
     signature: signatureB64,
+    sign_mode: q.sign_mode ?? "v2",
   };
 }
 
