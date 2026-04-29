@@ -1,16 +1,12 @@
 """
-RFQ Market Maker Main Flow (gRPC)
+RFQ Market Maker Main Flow (gRPC, v2 EIP-712 signing)
 
-!!! v1 SIGNING — NEEDS PORT TO v2 (EIP-712) !!!
-The indexer requires `sign_mode` ("v1" or "v2") on every quote as of
-2026-04-29. The inline `to_sign_quote` + `sign_quote` below build the
-legacy v1 raw-JSON payload. The rfq-testing standard is v2 (EIP-712).
-Canonical v2 reference: src/rfq_test/crypto/eip712.py +
-PYTHON_BUILDING_GUIDE.md.
+Standalone reference. The signing primitive is inlined so partners can
+vendor this file without depending on rfq_test.
 
-To port: replace those two helpers with
-    from rfq_test.crypto.eip712 import sign_quote_v2
-and add `quote.sign_mode = "v2"` before sending.
+Wire payloads MUST carry `sign_mode: "v2"` — empty values are rejected
+with `value of message.sign_mode must be one of "v1", "v2"`. Full spec:
+PYTHON_BUILDING_GUIDE.md and rfq.inj.so/onboarding.html#sign.
 
 Uses native gRPC MakerStream (bidirectional) instead of WebSocket.
 
@@ -18,8 +14,8 @@ Flow:
 0. MM has already granted permissions to RFQ contract (see setup.py)
 1. MM connects to gRPC MakerStream with maker metadata
 2. MM receives RFQ requests from the stream
-3. MM builds and signs quotes
-4. MM sends quotes back via the same stream
+3. MM builds and signs quotes (v2 EIP-712, see sign_quote_v2 below)
+4. MM sends quotes back via the same stream with sign_mode="v2"
 5. MM receives quote_ack, quote_update, settlement_update events
 
 Prerequisites:
@@ -35,7 +31,7 @@ from typing import Optional
 
 import dotenv
 from eth_utils import keccak
-from bech32 import bech32_encode, convertbits
+from bech32 import bech32_encode, bech32_decode, convertbits
 from eth_keys import keys
 
 # Add src to path so we can import the generated proto stubs
@@ -67,6 +63,9 @@ def must_env(key: str) -> str:
     return v
 
 
+EVM_CHAIN_ID = int(os.getenv("EVM_CHAIN_ID", "1439"))   # 1439 testnet, 1776 mainnet
+
+
 def trim_0x(s: str) -> str:
     return s[2:] if s.startswith("0x") else s
 
@@ -83,62 +82,81 @@ def eth_to_inj_address(eth_addr: str) -> str:
     return bech32_encode("inj", five_bit)
 
 
-def to_sign_quote(
-    chain_id: str,
+# --- EIP-712 v2 signing primitives (mirrors the indexer reference) -------------
+
+EIP712_DOMAIN_TYPE = (
+    b"EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)"
+)
+SIGN_QUOTE_TYPE = (
+    b"SignQuote(string marketId,uint64 rfqId,address taker,uint8 takerDirection,"
+    b"string takerMargin,string takerQuantity,address maker,"
+    b"uint32 makerSubaccountNonce,string makerQuantity,string makerMargin,"
+    b"string price,uint8 expiryKind,uint64 expiryValue,string minFillQuantity,"
+    b"uint8 bindingKind)"
+)
+
+
+def bech32_to_evm(addr: str) -> bytes:
+    """`inj1...` bech32 → 20 raw bytes (EVM form)."""
+    hrp, data = bech32_decode(addr)
+    if hrp != "inj" or data is None:
+        raise ValueError(f"bad inj address: {addr!r}")
+    raw = convertbits(data, 5, 8, False)
+    if raw is None or len(raw) != 20:
+        raise ValueError(f"expected 20-byte address, got {len(raw) if raw else 0}")
+    return bytes(raw)
+
+
+def _u(n: int, width: int) -> bytes:
+    return b"\x00" * (32 - width) + n.to_bytes(width, "big")
+def _s(s: str) -> bytes:        return keccak(text=s)
+def _addr(b20: bytes) -> bytes: return b"\x00" * 12 + b20
+
+
+def _domain_separator(contract_address: str) -> bytes:
+    return keccak(primitive=(
+        keccak(primitive=EIP712_DOMAIN_TYPE)
+        + _s("RFQ") + _s("1")
+        + _u(EVM_CHAIN_ID, 8)
+        + _addr(bech32_to_evm(contract_address))
+    ))
+
+
+def sign_quote_v2(
+    *,
+    private_key: str,
     contract_address: str,
     market_id: str,
     rfq_id: int,
-    taker: str,
-    taker_direction: str,
-    taker_margin: str,
-    taker_quantity: str,
-    maker: str,
+    taker_inj: str,
+    direction: str,                     # "long" or "short"
+    taker_margin: str, taker_quantity: str,
+    maker_inj: str, maker_subaccount_nonce: int,
+    maker_quantity: str, maker_margin: str,
     price: str,
     expiry_ms: int,
-    maker_subaccount_nonce: int = 0,
     min_fill_quantity: Optional[str] = None,
-) -> dict:
-    """Build the compact sign payload matching the contract's SignQuote struct."""
-    payload = {
-        "c": chain_id,
-        "ca": contract_address,
-        "mi": market_id,
-        "id": rfq_id,
-        "t": taker,
-        "td": taker_direction,
-        "tm": taker_margin,
-        "tq": taker_quantity,
-        "m": maker,
-        "ms": maker_subaccount_nonce,
-        "mq": taker_quantity,
-        "mm": taker_margin,
-        "p": price,
-        "e": {"ts": expiry_ms},
-    }
-    if min_fill_quantity is not None:
-        payload["mfq"] = min_fill_quantity
-    return payload
-
-
-def sign_quote(sign_obj: dict, mm_pk_hex: str) -> str:
-    """Sign keccak256(JSON(payload)) with secp256k1. Returns 0x-prefixed hex."""
-    payload = json.dumps(sign_obj, separators=(",", ":"), ensure_ascii=False)
-    msg_hash = keccak(text=payload)
-
-    pk_bytes = bytes.fromhex(trim_0x(mm_pk_hex))
-    priv_key = keys.PrivateKey(pk_bytes)
-    signature = priv_key.sign_msg_hash(msg_hash)
-
-    v = signature.v
-    if v < 27:
-        v += 27
-
-    sig_bytes = (
-        signature.r.to_bytes(32, "big")
-        + signature.s.to_bytes(32, "big")
-        + bytes([v])
-    )
-    return "0x" + sig_bytes.hex()
+) -> str:
+    """Sign a quote with EIP-712 v2 (timestamp-expiry only)."""
+    direction_byte = 0 if direction.lower() == "long" else 1
+    mfq = "0" if min_fill_quantity is None else min_fill_quantity
+    msg = b"".join((
+        keccak(primitive=SIGN_QUOTE_TYPE),
+        _s(market_id), _u(int(rfq_id), 8),
+        _addr(bech32_to_evm(taker_inj)), _u(direction_byte, 1),
+        _s(taker_margin), _s(taker_quantity),
+        _addr(bech32_to_evm(maker_inj)), _u(int(maker_subaccount_nonce), 4),
+        _s(maker_quantity), _s(maker_margin),
+        _s(price),
+        _u(0, 1), _u(int(expiry_ms), 8),                   # expiryKind=timestamp
+        _s(mfq),
+        _u(1, 1),                                          # bindingKind = 1
+    ))
+    digest = keccak(primitive=b"\x19\x01" + _domain_separator(contract_address) + keccak(primitive=msg))
+    pk = keys.PrivateKey(bytes.fromhex(trim_0x(private_key)))
+    sig = pk.sign_msg_hash(digest)
+    v = sig.v + 27 if sig.v < 27 else sig.v
+    return "0x" + (sig.r.to_bytes(32, "big") + sig.s.to_bytes(32, "big") + bytes([v])).hex()
 
 
 async def _request_iter(send_queue: asyncio.Queue):
@@ -171,24 +189,26 @@ async def send_quote(
     chain_id: str,
     contract_address: str,
 ):
-    """Build, sign, and enqueue a quote for the given request."""
+    """Build, sign, and enqueue a quote for the given request (v2 EIP-712)."""
     expiry_ms = int(time.time() * 1000) + 20_000
     price_str = f"{price:.1f}"
 
-    sign_obj = to_sign_quote(
-        chain_id=chain_id,
+    sig = sign_quote_v2(
+        private_key=mm_pk,
         contract_address=contract_address,
         market_id=request.market_id,
         rfq_id=int(request.rfq_id),
-        taker=request.request_address,
-        taker_direction=request.direction,
+        taker_inj=request.request_address,
+        direction=request.direction,
         taker_margin=request.margin,
         taker_quantity=request.quantity,
-        maker=maker_addr,
+        maker_inj=maker_addr,
+        maker_subaccount_nonce=0,
+        maker_quantity=request.quantity,
+        maker_margin=request.margin,
         price=price_str,
         expiry_ms=expiry_ms,
     )
-    sig = sign_quote(sign_obj, mm_pk)
 
     quote = RFQQuoteType(
         chain_id=chain_id,
@@ -203,6 +223,7 @@ async def send_quote(
         maker=maker_addr,
         taker=request.request_address,
         signature=sig,
+        sign_mode="v2",                      # required by indexer
         maker_subaccount_nonce=0,
     )
 
