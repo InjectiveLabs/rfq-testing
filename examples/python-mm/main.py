@@ -217,13 +217,14 @@ async def send_quote(
         min_fill_quantity=min_fill_quantity,
     )
 
-    # v2 EIP-712 — pass exactly one of expiry_ms / expiry_height
+    # v2 EIP-712 — the digest binds the TAKER's direction (req.direction),
+    # not the MM's quoted side. Pass exactly one of expiry_ms / expiry_height.
     sig = sign_quote_v2(
         private_key=mm_pk,
         market_id=quote.market_id,
         rfq_id=quote.rfq_id,
         taker_inj=quote.taker,
-        direction="long" if quote.direction == 0 else "short",
+        direction="long" if req.direction == 0 else "short",
         taker_margin=req.margin,
         taker_quantity=req.quantity,
         maker_inj=quote.maker,
