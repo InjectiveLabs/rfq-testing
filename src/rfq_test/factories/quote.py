@@ -1,21 +1,21 @@
-"""Factory for generating quote test data."""
+"""Factory for generating quote test data (v2-only EIP-712 signing)."""
 
 import time
 from decimal import Decimal
 from typing import Optional
 
-from rfq_test.crypto.signing import sign_quote
+from rfq_test.crypto.eip712 import sign_quote_v2
 from rfq_test.models.config import MarketConfig
 from rfq_test.models.types import Direction
 
 
 class QuoteFactory:
     """Factory for creating quote test data.
-    
-    Supports creating valid signed quotes and intentionally
-    invalid quotes for validation testing.
+
+    Produces v2 (EIP-712) signed quotes. Supports intentionally-invalid
+    quotes for validation testing (tampered signature, wrong signer).
     """
-    
+
     def __init__(
         self,
         default_market: Optional[MarketConfig] = None,
@@ -23,50 +23,50 @@ class QuoteFactory:
     ):
         self.default_market = default_market
         self.default_validity_seconds = default_validity_seconds
-    
+
     def create(
         self,
         maker_private_key: str,
         maker_address: str,
         request: dict,
+        evm_chain_id: int,
+        contract_address: str,
+        chain_id: Optional[str] = None,
         price: Optional[Decimal] = None,
         margin: Optional[Decimal] = None,
         quantity: Optional[Decimal] = None,
         expiry: Optional[int] = None,
         validity_seconds: Optional[int] = None,
-        chain_id: Optional[str] = None,
-        contract_address: Optional[str] = None,
         **overrides,
     ) -> dict:
-        """Create a valid signed quote.
-
-        For contract verification pass chain_id and contract_address (e.g. from env_config.signing_context()).
+        """Create a v2-signed quote.
 
         Args:
-            maker_private_key: Maker's private key for signing
-            maker_address: Maker's Injective address
-            request: The request being quoted
-            price: Quote price (derives from market if None)
-            margin: Maker margin (same as taker if None)
-            quantity: Maker quantity (same as taker if None)
-            expiry: Expiry timestamp (calculates if None)
-            validity_seconds: Quote validity (uses default if None)
-            chain_id: Chain ID for contract verification
-            contract_address: Contract address for contract verification
-            **overrides: Override any field after signing
+            maker_private_key: Maker's private key (hex)
+            maker_address: Maker's `inj1...` address
+            request: The RFQ request being quoted
+            evm_chain_id: EVM chain ID for the EIP-712 domain (testnet/devnet=1439)
+            contract_address: RFQ contract bech32 address (verifying contract)
+            chain_id: Cosmos chain_id, included in the wire payload only.
+                The v2 signature does NOT bind it (the domain separator does).
+            price: Quote price (defaults to market price if available)
+            margin: Maker margin (defaults to taker margin)
+            quantity: Maker quantity (defaults to taker quantity)
+            expiry: Expiry as Unix timestamp ms (defaults to validity_seconds from now)
+            validity_seconds: Quote validity window when expiry is None
+            **overrides: Apply on the returned dict after signing — note that
+                overriding signed fields will invalidate the signature.
 
         Returns:
-            Quote data dict with signature (and chain_id/contract_address when provided)
+            Quote dict with `signature`, `sign_mode="v2"`, and all wire fields.
         """
-        # Extract request data
         rfq_id = request["rfq_id"]
         market_id = request["market_id"]
         taker = request.get("taker") or request.get("request_address", "")
         direction = request["direction"]
         taker_margin = request["margin"]
         taker_quantity = request["quantity"]
-        
-        # Default values
+
         if margin is None:
             margin = Decimal(taker_margin)
         if quantity is None:
@@ -85,23 +85,22 @@ class QuoteFactory:
         min_fill_quantity = overrides.pop("min_fill_quantity", None)
         if min_fill_quantity is not None:
             min_fill_quantity = str(min_fill_quantity)
-        
-        # Sign the quote (include chain_id/contract_address for contract verification)
-        signature = sign_quote(
+
+        signature = sign_quote_v2(
             private_key=maker_private_key,
-            rfq_id=rfq_id,
+            evm_chain_id=evm_chain_id,
+            verifying_contract_bech32=contract_address,
             market_id=market_id,
-            direction=direction,
+            rfq_id=int(rfq_id),
             taker=taker,
+            direction=direction,
             taker_margin=taker_margin,
             taker_quantity=taker_quantity,
             maker=maker_address,
             maker_margin=str(margin),
             maker_quantity=str(quantity),
             price=str(price),
-            expiry=expiry,
-            chain_id=chain_id,
-            contract_address=contract_address,
+            expiry_ms=expiry,
             maker_subaccount_nonce=maker_subaccount_nonce,
             min_fill_quantity=min_fill_quantity,
         )
@@ -117,50 +116,24 @@ class QuoteFactory:
             "expiry": expiry,
             "maker": maker_address,
             "signature": signature,
+            "sign_mode": "v2",
             "maker_subaccount_nonce": maker_subaccount_nonce,
+            "contract_address": contract_address,
         }
         if min_fill_quantity is not None:
             quote["min_fill_quantity"] = min_fill_quantity
         if chain_id is not None:
             quote["chain_id"] = chain_id
-        if contract_address is not None:
-            quote["contract_address"] = contract_address
 
-        # Apply overrides (note: this may invalidate signature)
         quote.update(overrides)
         return quote
 
-    def create_indexer_quote(
-        self,
-        maker_private_key: str,
-        maker_address: str,
-        request: dict,
-        price: Optional[Decimal] = None,
-        margin: Optional[Decimal] = None,
-        quantity: Optional[Decimal] = None,
-        expiry: Optional[int] = None,
-        chain_id: Optional[str] = None,
-        contract_address: Optional[str] = None,
-        **overrides,
-    ) -> dict:
+    def create_indexer_quote(self, *args, **kwargs) -> dict:
         """Create a quote in the shape expected by the indexer (MakerStream).
 
-        Same as create() but uses 'direction' key (not 'taker_direction') for indexer compatibility.
-        Pass chain_id and contract_address for indexer validation and contract-compatible signature.
+        Same as `create()` but renames `taker_direction` -> `direction`.
         """
-        quote = self.create(
-            maker_private_key=maker_private_key,
-            maker_address=maker_address,
-            request=request,
-            price=price,
-            margin=margin,
-            quantity=quantity,
-            expiry=expiry,
-            chain_id=chain_id,
-            contract_address=contract_address,
-            **overrides,
-        )
-        # Indexer expects "direction" not "taker_direction"
+        quote = self.create(*args, **kwargs)
         if "taker_direction" in quote:
             quote["direction"] = quote.pop("taker_direction")
         return quote
@@ -173,18 +146,7 @@ class QuoteFactory:
         expired_seconds_ago: int = 60,
         **kwargs,
     ) -> dict:
-        """Create a quote that's already expired.
-        
-        Args:
-            maker_private_key: Maker's private key
-            maker_address: Maker's address
-            request: The request
-            expired_seconds_ago: How long ago it expired
-            **kwargs: Additional parameters
-            
-        Returns:
-            Expired quote
-        """
+        """Create a quote that's already expired."""
         expiry = int(time.time() * 1000) - (expired_seconds_ago * 1000)
         return self.create(
             maker_private_key=maker_private_key,
@@ -193,7 +155,7 @@ class QuoteFactory:
             expiry=expiry,
             **kwargs,
         )
-    
+
     def create_with_invalid_signature(
         self,
         maker_private_key: str,
@@ -201,34 +163,21 @@ class QuoteFactory:
         request: dict,
         **kwargs,
     ) -> dict:
-        """Create a quote with tampered signature.
-        
-        Args:
-            maker_private_key: Maker's private key
-            maker_address: Maker's address
-            request: The request
-            **kwargs: Additional parameters
-            
-        Returns:
-            Quote with invalid signature
-        """
+        """Create a quote with a tampered signature."""
         quote = self.create(
             maker_private_key=maker_private_key,
             maker_address=maker_address,
             request=request,
             **kwargs,
         )
-        
-        # Tamper with signature
+
         sig = quote["signature"]
         if sig:
-            # Flip a byte
             sig_bytes = bytes.fromhex(sig.replace("0x", ""))
             tampered = bytes([sig_bytes[0] ^ 0xFF]) + sig_bytes[1:]
-            quote["signature"] = tampered.hex()
-        
+            quote["signature"] = "0x" + tampered.hex()
         return quote
-    
+
     def create_with_wrong_signer(
         self,
         wrong_private_key: str,
@@ -236,21 +185,7 @@ class QuoteFactory:
         request: dict,
         **kwargs,
     ) -> dict:
-        """Create a quote signed by wrong private key.
-        
-        The signature is valid but made by a different key
-        than the maker address.
-        
-        Args:
-            wrong_private_key: Different private key (not maker's)
-            maker_address: Maker's address (mismatched)
-            request: The request
-            **kwargs: Additional parameters
-            
-        Returns:
-            Quote with mismatched signer
-        """
-        # Sign with wrong key but claim to be maker_address
+        """Sign with a different key but claim to be `maker_address`."""
         return self.create(
             maker_private_key=wrong_private_key,
             maker_address=maker_address,

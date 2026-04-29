@@ -1,4 +1,11 @@
 /*
+ * !!! v1 SIGNING — NEEDS PORT TO v2 (EIP-712) !!!
+ * As of 2026-04-29 the indexer rejects empty `sign_mode`. v2 is the
+ * rfq-testing standard. Canonical v2 reference (port from these):
+ *   - injective-indexer service/rfq/signature/eip712.go (Go)
+ *   - rfq-testing src/rfq_test/crypto/eip712.py
+ *   - PYTHON_BUILDING_GUIDE.md
+ *
  * RFQ Market Maker Main Flow
  *
  * Flow:

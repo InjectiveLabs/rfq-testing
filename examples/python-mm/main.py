@@ -1,6 +1,21 @@
 '''
  * RFQ Market Maker Main Flow
  *
+ * !!! v1 SIGNING — NEEDS PORT TO v2 (EIP-712) !!!
+ *
+ * As of 2026-04-29 the indexer rejects empty `sign_mode` and only accepts
+ * "v1" (raw JSON keccak256, what this file uses today) or "v2" (EIP-712).
+ * v1 is staying around for now but the rfq-testing repo standard is v2.
+ *
+ * For the canonical v2 implementation see:
+ *   - src/rfq_test/crypto/eip712.py        (Python reference, byte-compat with the indexer)
+ *   - PYTHON_BUILDING_GUIDE.md             (recipe + pitfalls)
+ *   - https://rfq.inj.so/onboarding.html#sign  (TS recipe)
+ *
+ * To port: replace `to_sign_quote` + `sign_quote` below with
+ * `from rfq_test.crypto.eip712 import sign_quote_v2` and feed the Quote
+ * fields into it (and add `"sign_mode": "v2"` to the wire payload).
+ *
  * Flow:
  * 0. MM has already granted permissions to RFQ contract
  * 1. MM connects to WebSocket & subscribes to RFQ requests

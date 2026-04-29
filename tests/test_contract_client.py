@@ -5,7 +5,7 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 from rfq_test.clients.contract import ContractClient
-from rfq_test.crypto.signing import sign_quote
+from rfq_test.crypto.eip712 import sign_quote_v2
 from rfq_test.models.types import Direction
 
 
@@ -86,24 +86,32 @@ async def test_accept_quote_normalizes_expiry_and_signature_for_contract():
     assert quote["signature"].endswith("=")
 
 
-def test_sign_quote_preserves_exact_price_string():
+def test_sign_quote_v2_preserves_exact_price_string():
+    """v2 encodes decimals as keccak256(utf8(s)) — adding a trailing zero
+    must change the digest, so the wire price MUST match the signed price
+    byte-for-byte. This test guards against any future
+    'normalize my way' helper that strips zeros silently.
+    """
+    # Use a real bech32 address so bech32_to_evm doesn't choke. The taker /
+    # maker / contract are all the same dummy address — fine for this assertion.
+    addr = "inj1qw7jk82hjvf79tnjykux6zacuh9gl0z0wl3ruk"
     kwargs = dict(
         private_key="11" * 32,
-        rfq_id="123",
+        evm_chain_id=1439,
+        verifying_contract_bech32=addr,
         market_id="0xmarket",
+        rfq_id=123,
+        taker=addr,
         direction="long",
-        taker="inj1taker",
         taker_margin="10",
         taker_quantity="1",
-        maker="inj1maker",
+        maker=addr,
         maker_margin="10",
         maker_quantity="1",
-        expiry=1772851186901,
-        chain_id="injective-888",
-        contract_address="inj1contract",
+        expiry_ms=1772851186901,
     )
 
-    sig_with_trailing_zero = sign_quote(price="3.000250787727220160", **kwargs)
-    sig_without_trailing_zero = sign_quote(price="3.00025078772722016", **kwargs)
+    sig_with_trailing_zero = sign_quote_v2(price="3.000250787727220160", **kwargs)
+    sig_without_trailing_zero = sign_quote_v2(price="3.00025078772722016", **kwargs)
 
     assert sig_with_trailing_zero != sig_without_trailing_zero

@@ -1,177 +1,165 @@
 #!/usr/bin/env python3
-"""Test that our Python signing matches the Go indexer's expectations.
+"""Sanity-check EIP-712 v2 signing against an indexer-style verifier.
 
-This script creates a test signature and verifies we can recover the correct address.
+The indexer recovers an `inj1` address from the signature and checks it
+against the expected maker / taker. We mirror that verification here so
+the round-trip can run without contacting devnet — useful for catching
+encoding drift before pushing.
+
+Set RFQ_TEST_MM_PRIVATE_KEY (and optionally RFQ_TEST_MM_INJ for an
+explicit expected address). If the env var is unset we generate a fresh
+ephemeral key and roundtrip against ourselves.
 """
 
+from __future__ import annotations
+
+import os
 import sys
 from pathlib import Path
 
-# Add src to path
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
+import bech32
 from eth_account import Account
-from eth_hash.auto import keccak
-import json
 
-# Use a known test private key
-TEST_PRIVATE_KEY = "YOURPRIVATEKEYHERE"
-EXPECTED_ADDRESS = "YOURINJEXPECTEDADDRESSFROMPRIVATEKEYHERE"
+from rfq_test.crypto.eip712 import (
+    sign_conditional_order_v2,
+    sign_quote_digest,
+    sign_quote_v2,
+    signed_taker_intent_digest,
+)
 
-
-def get_inj_address_from_private_key(private_key: str) -> str:
-    """Convert private key to Injective bech32 address."""
-    from pyinjective.wallet import PrivateKey
-    
-    if private_key.startswith("0x"):
-        private_key = private_key[2:]
-    
-    priv_key = PrivateKey.from_hex(private_key)
-    pub_key = priv_key.to_public_key()
-    return pub_key.to_address().to_acc_bech32()
+# Devnet defaults (from Slack #rfq-eng 2026-04-29 and configs/devnet.yaml).
+EVM_CHAIN_ID = 1439
+CONTRACT_BECH32 = "inj19g43wyj843ydkc845dcdea6su4mgfjwnpjz6h5"
+MARKET_ID = (
+    "0xdc70164d7120529c3cd84278c98df4151210c0447a65a2aab03459cf328de41e"
+)
 
 
-def test_address_derivation():
-    """Test that we derive the correct address from private key."""
-    address = get_inj_address_from_private_key(TEST_PRIVATE_KEY)
-    print(f"Derived address: {address}")
-    print(f"Expected address: {EXPECTED_ADDRESS}")
-    assert address == EXPECTED_ADDRESS, f"Address mismatch: {address} != {EXPECTED_ADDRESS}"
-    print("✓ Address derivation correct\n")
+def eth_to_inj(eth_addr_hex: str) -> str:
+    raw = bytes.fromhex(eth_addr_hex.removeprefix("0x"))
+    return bech32.bech32_encode("inj", bech32.convertbits(raw, 8, 5))
 
 
-def test_signing_and_recovery():
-    """Test that we can sign and recover the correct address."""
-    # Build a test payload matching the Go test
-    payload_dict = {
-        "mi": "market_123",
-        "id": 456,
-        "t": "inj1taker",
-        "td": "long",
-        "tm": "100",
-        "tq": "200",
-        "m": EXPECTED_ADDRESS,  # Use the correct maker address
-        "mq": "300",
-        "mm": "400",
-        "p": "500",
-        "e": 1700000000000,
-    }
-    
-    # JSON stringify (no spaces, preserve field order)
-    payload_json = json.dumps(payload_dict, separators=(",", ":"))
-    print(f"Payload JSON: {payload_json}")
-    
-    # Expected JSON from Go test
-    expected_json = f'{{"mi":"market_123","id":456,"t":"inj1taker","td":"long","tm":"100","tq":"200","m":"{EXPECTED_ADDRESS}","mq":"300","mm":"400","p":"500","e":1700000000000}}'
-    print(f"Expected JSON: {expected_json}")
-    
-    assert payload_json == expected_json, f"JSON mismatch:\nGot:      {payload_json}\nExpected: {expected_json}"
-    print("✓ JSON serialization matches\n")
-    
-    # Hash with keccak256
-    message_hash = keccak(payload_json.encode("utf-8"))
-    print(f"Message hash: {message_hash.hex()}")
-    
-    # Sign with secp256k1
-    account = Account.from_key(bytes.fromhex(TEST_PRIVATE_KEY))
-    signature = account.unsafe_sign_hash(message_hash)
-    
-    # Serialize signature (r + s + v, 65 bytes)
-    sig_bytes = (
-        signature.r.to_bytes(32, "big") +
-        signature.s.to_bytes(32, "big") +
-        bytes([signature.v])
-    )
-    
-    print(f"Signature (hex): 0x{sig_bytes.hex()}")
-    print(f"Signature length: {len(sig_bytes)} bytes")
-    print(f"v value: {signature.v}")
-    
-    # Recover the address from signature
-    # Normalize v for recovery (Go expects 0/1, Python gives 27/28)
-    v = signature.v
-    if v >= 27:
-        v -= 27
-    
-    recovery_sig = sig_bytes[:64] + bytes([v])
-    
-    from eth_account._utils.signing import to_standard_v
-    recovered_address = Account._recover_hash(message_hash, signature=sig_bytes)
-    print(f"Recovered ETH address: {recovered_address}")
-    
-    # Convert ETH address to Injective bech32
-    from bech32 import bech32_encode, convertbits
-    eth_bytes = bytes.fromhex(recovered_address[2:])  # Remove 0x prefix
-    
-    # Convert to 5-bit groups for bech32
-    data = convertbits(eth_bytes, 8, 5)
-    inj_address = bech32_encode("inj", data)
-    print(f"Recovered INJ address: {inj_address}")
-    
-    assert inj_address == EXPECTED_ADDRESS, f"Recovered address mismatch: {inj_address} != {EXPECTED_ADDRESS}"
-    print("✓ Signature recovery correct\n")
+def recover_inj(digest: bytes, signature_hex: str) -> str:
+    sig = bytes.fromhex(signature_hex.removeprefix("0x"))
+    if len(sig) != 65:
+        raise ValueError(f"signature must be 65 bytes, got {len(sig)}")
+    if sig[64] >= 27:
+        sig = sig[:64] + bytes([sig[64] - 27])
+    eth = Account._recover_hash(digest, signature=sig)
+    return eth_to_inj(eth)
 
 
-def test_full_signing_flow():
-    """Test the full signing flow using our sign_quote function."""
-    from rfq_test.crypto.signing import sign_quote, verify_signature
-    
-    # Sign a test quote
-    signature = sign_quote(
-        private_key=TEST_PRIVATE_KEY,
-        rfq_id="456",
-        market_id="market_123",
+def load_or_generate() -> tuple[str, str]:
+    pk = os.environ.get("RFQ_TEST_MM_PRIVATE_KEY")
+    if pk:
+        pk = pk.removeprefix("0x")
+        acct = Account.from_key(bytes.fromhex(pk))
+        expected = os.environ.get("RFQ_TEST_MM_INJ") or eth_to_inj(acct.address)
+        return pk, expected
+    acct = Account.create()
+    return acct.key.hex(), eth_to_inj(acct.address)
+
+
+def test_sign_quote_roundtrip(pk_hex: str, expected_inj: str) -> None:
+    sig = sign_quote_v2(
+        private_key=pk_hex,
+        evm_chain_id=EVM_CHAIN_ID,
+        verifying_contract_bech32=CONTRACT_BECH32,
+        market_id=MARKET_ID,
+        rfq_id=42,
+        taker=expected_inj,
         direction="long",
-        taker="inj1taker",
         taker_margin="100",
-        taker_quantity="200",
-        maker=EXPECTED_ADDRESS,
-        maker_margin="400",
-        maker_quantity="300",
-        price="500",
-        expiry=1700000000000,
+        taker_quantity="1",
+        maker=expected_inj,
+        maker_margin="100",
+        maker_quantity="1",
+        price="4.5",
+        expiry_ms=1_700_000_000_000,
     )
-    
-    print(f"Generated signature: 0x{signature}")
-    print(f"Signature length: {len(bytes.fromhex(signature))} bytes")
-    
-    # Verify we can recover the correct address
-    recovered = verify_signature(
-        signature=signature,
-        rfq_id="456",
-        market_id="market_123",
+    digest = sign_quote_digest(
+        evm_chain_id=EVM_CHAIN_ID,
+        verifying_contract_bech32=CONTRACT_BECH32,
+        market_id=MARKET_ID,
+        rfq_id=42,
+        taker_bech32=expected_inj,
         direction="long",
-        taker="inj1taker",
         taker_margin="100",
-        taker_quantity="200",
-        maker=EXPECTED_ADDRESS,
-        maker_margin="400",
-        maker_quantity="300",
-        price="500",
-        expiry=1700000000000,
+        taker_quantity="1",
+        maker_bech32=expected_inj,
+        maker_subaccount_nonce=0,
+        maker_quantity="1",
+        maker_margin="100",
+        price="4.5",
+        expiry_kind=0,
+        expiry_value=1_700_000_000_000,
+        min_fill_quantity=None,
     )
-    
-    print(f"Recovered ETH address: {recovered}")
-    
-    # The recovered address should be the ETH address corresponding to our maker
-    account = Account.from_key(bytes.fromhex(TEST_PRIVATE_KEY))
-    expected_eth = account.address
-    print(f"Expected ETH address: {expected_eth}")
-    
-    assert recovered.lower() == expected_eth.lower(), f"Recovery mismatch: {recovered} != {expected_eth}"
-    print("✓ Full signing flow correct\n")
+    recovered = recover_inj(digest, sig)
+    assert recovered == expected_inj, f"{recovered} != {expected_inj}"
+    print(f"  signature (65B): {sig}")
+    print(f"  recovered      : {recovered}")
+    print("[OK] SignQuote v2 roundtrip\n")
+
+
+def test_signed_taker_intent_roundtrip(pk_hex: str, expected_inj: str) -> None:
+    sig = sign_conditional_order_v2(
+        private_key=pk_hex,
+        evm_chain_id=EVM_CHAIN_ID,
+        verifying_contract_bech32=CONTRACT_BECH32,
+        version=1,
+        taker=expected_inj,
+        epoch=1,
+        rfq_id=12345,
+        market_id=MARKET_ID,
+        subaccount_nonce=0,
+        lane_version=1,
+        deadline_ms=1_700_001_000_000,
+        direction="short",
+        quantity="1",
+        margin="0",
+        worst_price="132",
+        min_total_fill_quantity="1",
+        trigger_type="mark_price_gte",
+        trigger_price="120",
+    )
+    digest = signed_taker_intent_digest(
+        evm_chain_id=EVM_CHAIN_ID,
+        verifying_contract_bech32=CONTRACT_BECH32,
+        version=1,
+        taker_bech32=expected_inj,
+        epoch=1,
+        rfq_id=12345,
+        market_id=MARKET_ID,
+        subaccount_nonce=0,
+        lane_version=1,
+        deadline_ms=1_700_001_000_000,
+        direction="short",
+        quantity="1",
+        margin="0",
+        worst_price="132",
+        min_total_fill_quantity="1",
+        trigger_type="mark_price_gte",
+        trigger_price="120",
+    )
+    recovered = recover_inj(digest, sig)
+    assert recovered == expected_inj, f"{recovered} != {expected_inj}"
+    print(f"  signature (65B): {sig}")
+    print(f"  recovered      : {recovered}")
+    print("[OK] SignedTakerIntent v2 roundtrip\n")
 
 
 if __name__ == "__main__":
     print("=" * 60)
-    print("Testing Python signing vs Go indexer expectations")
+    print("Sanity-checking EIP-712 v2 signing")
     print("=" * 60)
-    print()
-    
-    test_address_derivation()
-    test_signing_and_recovery()
-    test_full_signing_flow()
-    
+    pk, expected = load_or_generate()
+    print(f"maker/taker = {expected}\n")
+    test_sign_quote_roundtrip(pk, expected)
+    test_signed_taker_intent_roundtrip(pk, expected)
     print("=" * 60)
-    print("All tests passed!")
+    print("All v2 round-trips passed.")
     print("=" * 60)

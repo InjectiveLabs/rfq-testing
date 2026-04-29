@@ -1,4 +1,12 @@
 /**
+ * !!! v1 SIGNING — NEEDS PORT TO v2 (EIP-712) !!!
+ * The indexer requires `sign_mode` ("v1" or "v2") on every quote as of
+ * 2026-04-29. The rfq-testing standard is v2. This file's signing helper
+ * still produces v1. Canonical v2 reference:
+ *   - src/rfq_test/crypto/eip712.py    (Python — byte-compat with indexer)
+ *   - PYTHON_BUILDING_GUIDE.md
+ *   - https://rfq.inj.so/onboarding.html#sign  (TS recipe)
+ *
  * RFQ – Market Maker Main Flow
  *
  * Flow:

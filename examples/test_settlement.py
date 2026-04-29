@@ -20,7 +20,7 @@ from rfq_test.config import get_settings, get_environment_config
 from rfq_test.crypto.wallet import Wallet
 from rfq_test.clients.websocket import MakerStreamClient, TakerStreamClient
 from rfq_test.clients.contract import ContractClient
-from rfq_test.crypto.signing import sign_quote
+from rfq_test.crypto.eip712 import sign_quote_v2
 from rfq_test.models.types import Direction
 from rfq_test.utils.price import PriceFetcher
 
@@ -48,6 +48,7 @@ async def mm_wait_and_quote(
     mm_wallet,
     chain_id,
     contract_address,
+    evm_chain_id,
     target_rfq_id,
     quote_price: Decimal,
 ):
@@ -79,21 +80,21 @@ async def mm_wait_and_quote(
     maker_subaccount_nonce = 0
     min_fill_quantity = None
 
-    signature = sign_quote(
+    signature = sign_quote_v2(
         private_key=mm_wallet.private_key,
-        rfq_id=str(received["rfq_id"]),
+        evm_chain_id=evm_chain_id,
+        verifying_contract_bech32=contract_address,
         market_id=received["market_id"],
-        direction="long",
+        rfq_id=int(received["rfq_id"]),
         taker=taker,
+        direction="long",
         taker_margin=received["margin"],
         taker_quantity=received["quantity"],
         maker=mm_wallet.inj_address,
         maker_margin=received["margin"],
         maker_quantity=received["quantity"],
         price=str(quote_price),
-        expiry=quote_expiry,
-        chain_id=chain_id,
-        contract_address=contract_address,
+        expiry_ms=quote_expiry,
         maker_subaccount_nonce=maker_subaccount_nonce,
         min_fill_quantity=min_fill_quantity,
     )
@@ -111,6 +112,7 @@ async def mm_wait_and_quote(
         "maker": mm_wallet.inj_address,
         "taker": taker,
         "signature": signature,
+        "sign_mode": "v2",
         "maker_subaccount_nonce": maker_subaccount_nonce,
         "min_fill_quantity": min_fill_quantity,
     }
@@ -198,6 +200,7 @@ async def main():
     retail_wallet = Wallet.from_private_key(retail_pk)
     market = config.default_market
     chain_id, contract_address = config.signing_context
+    evm_chain_id, _ = config.signing_context_v2
     price_fetcher = PriceFetcher(config)
     mark_price = await price_fetcher.get_price(market)
     maker_quote_price = (mark_price * Decimal("1.01")).quantize(Decimal("0.000000000000000001"))
@@ -280,6 +283,7 @@ async def main():
             mm_wallet,
             chain_id,
             contract_address,
+            evm_chain_id,
             rfq_id,
             maker_quote_price,
         )

@@ -367,6 +367,7 @@ class TakerStreamClient(BaseStreamClient):
         signature: str,
         wait_for_ack: bool = True,
         response_timeout: float = 5.0,
+        sign_mode: str = "v2",
     ) -> Optional[dict]:
         """Send a conditional order (TP/SL) via the TakerStream.
 
@@ -376,10 +377,15 @@ class TakerStreamClient(BaseStreamClient):
                 lane_version, deadline_ms, direction, quantity, margin, worst_price,
                 min_total_fill_quantity, trigger_type, trigger_price, unfilled_action,
                 cid, allowed_relayer.
-            signature: Hex-encoded secp256k1 signature from sign_conditional_order()
-                (with or without 0x prefix — 0x is added automatically).
+            signature: Hex-encoded secp256k1 signature from
+                `sign_conditional_order_v2()` (with or without 0x prefix — 0x is
+                added automatically).
             wait_for_ack: If True, block until conditional_order_ack or error arrives.
             response_timeout: Seconds to wait for ack (default 5.0).
+            sign_mode: Signature scheme — must be "v2" for any signature this
+                client produces. The indexer rejects empty values
+                (`value of message.conditional_order_sign_mode must be one of
+                "v1", "v2"`). Default "v2".
 
         Returns:
             Dict with rfq_id and status if wait_for_ack=True, else None.
@@ -421,6 +427,7 @@ class TakerStreamClient(BaseStreamClient):
             message_type="conditional_order",
             conditional_order=co,
             conditional_order_signature=sig,
+            conditional_order_sign_mode=sign_mode,
         )
         logger.info(
             "Sending conditional_order: market=%s dir=%s trigger_type=%s trigger_price=%s",
@@ -840,6 +847,10 @@ class MakerStreamClient(BaseStreamClient):
 
         expiry_ts = int(quote_data.get("expiry", 0))
         min_fill_quantity = quote_data.get("min_fill_quantity")
+        # sign_mode is required by the indexer (post 2026-04-29 devnet deploy);
+        # an empty string fails validation with `value of message.sign_mode must
+        # be one of "v1", "v2"`. We default to v2 — this client only signs v2.
+        sign_mode = quote_data.get("sign_mode") or "v2"
         quote_kwargs = {
             "chain_id": quote_data.get("chain_id", ""),
             "contract_address": quote_data.get("contract_address", ""),
@@ -856,6 +867,7 @@ class MakerStreamClient(BaseStreamClient):
             "status": "pending",
             "transaction_time": int(time.time() * 1000),
             "maker_subaccount_nonce": int(quote_data.get("maker_subaccount_nonce", 0)),
+            "sign_mode": sign_mode,
         }
         if min_fill_quantity is not None:
             quote_kwargs["min_fill_quantity"] = str(min_fill_quantity)

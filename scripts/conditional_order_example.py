@@ -37,7 +37,7 @@ import argparse
 import httpx
 
 from rfq_test.config import get_environment_config, Settings
-from rfq_test.crypto.signing import sign_conditional_order
+from rfq_test.crypto.eip712 import sign_conditional_order_v2
 from rfq_test.crypto.wallet import Wallet
 from rfq_test.clients.contract import ContractClient
 from rfq_test.clients.websocket import TakerStreamClient
@@ -80,6 +80,7 @@ async def _build_order(private_key: str, env_config, market_id: str) -> tuple[di
     """
     wallet = Wallet.from_private_key(private_key)
     chain_id, contract_address = env_config.signing_context
+    evm_chain_id, _ = env_config.signing_context_v2
 
     # Step 1 — Fetch market tick sizes from the chain.
     # Cache and reuse in production; this is fine for a script.
@@ -120,11 +121,14 @@ async def _build_order(private_key: str, env_config, market_id: str) -> tuple[di
     trigger_price_str = quantize_to_tick(raw_trigger, price_tick)
 
     # Step 3 — Sign using the quantized strings (not the raw Decimals).
-    signature = sign_conditional_order(
+    # v2 (EIP-712) signing: the signature binds (evm_chain_id, contract) via the
+    # domain separator, so the wire-payload `chain_id` / `contract_address`
+    # fields are informational only.
+    signature = sign_conditional_order_v2(
         private_key=private_key,
+        evm_chain_id=evm_chain_id,
+        verifying_contract_bech32=contract_address,
         version=1,
-        chain_id=chain_id,
-        contract_address=contract_address,
         taker=wallet.inj_address,
         epoch=epoch,
         rfq_id=rfq_id,
@@ -138,7 +142,7 @@ async def _build_order(private_key: str, env_config, market_id: str) -> tuple[di
         min_total_fill_quantity=quantity,
         trigger_type=trigger_type,
         trigger_price=trigger_price_str,
-        margin="0",  # must be "0" for v1 reduce-only (close) orders
+        margin="0",  # must be "0" for reduce-only (close-position) orders
     )
 
     # Step 4 — Build the order body using the SAME quantized strings as signed.

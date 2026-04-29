@@ -8,7 +8,7 @@ from typing import Callable, Optional
 
 from rfq_test.clients.chain import ChainClient
 from rfq_test.clients.websocket import MakerStreamClient
-from rfq_test.crypto.signing import sign_quote
+from rfq_test.crypto.eip712 import sign_quote_v2
 from rfq_test.crypto.wallet import Wallet
 from rfq_test.models.config import MarketConfig
 from rfq_test.models.types import Direction
@@ -33,6 +33,7 @@ class MarketMaker:
         quote_validity_seconds: int = 20,
         chain_id: Optional[str] = None,
         contract_address: Optional[str] = None,
+        evm_chain_id: Optional[int] = None,
         subscribe_to_quotes_updates: bool = False,
         subscribe_to_settlement_updates: bool = False,
     ):
@@ -42,6 +43,7 @@ class MarketMaker:
         self.quote_validity_seconds = quote_validity_seconds
         self.chain_id = chain_id
         self.contract_address = contract_address
+        self.evm_chain_id = evm_chain_id
         self.subscribe_to_quotes_updates = subscribe_to_quotes_updates
         self.subscribe_to_settlement_updates = subscribe_to_settlement_updates
         self._ws_client: Optional[MakerStreamClient] = None
@@ -176,27 +178,34 @@ class MarketMaker:
         # Expiry timestamp (milliseconds)
         expiry = int(time.time() * 1000) + (self.quote_validity_seconds * 1000)
         
-        # Sign the quote (include chain_id/contract_address for contract verification)
-        signature = sign_quote(
+        # Sign the quote with EIP-712 v2. evm_chain_id + contract_address are
+        # required: they bind the signature to a specific chain + contract via
+        # the domain separator.
+        if self.evm_chain_id is None or self.contract_address is None:
+            raise RuntimeError(
+                "MarketMaker requires evm_chain_id and contract_address for v2 signing"
+            )
+        signature = sign_quote_v2(
             private_key=self.wallet.private_key,
-            rfq_id=str(rfq_id),
+            evm_chain_id=self.evm_chain_id,
+            verifying_contract_bech32=self.contract_address,
             market_id=market_id,
-            direction=direction.value,
+            rfq_id=int(rfq_id),
             taker=taker,
+            direction=direction.value,
             taker_margin=str(taker_margin),
             taker_quantity=str(taker_quantity),
             maker=self.address,
             maker_margin=str(maker_margin),
             maker_quantity=str(maker_quantity),
             price=str(price),
-            expiry=expiry,
-            chain_id=self.chain_id,
-            contract_address=self.contract_address,
+            expiry_ms=expiry,
             maker_subaccount_nonce=maker_subaccount_nonce,
             min_fill_quantity=min_fill_quantity,
         )
 
-        # Build quote payload (indexer expects chain_id and contract_address)
+        # Build quote payload (indexer expects chain_id, contract_address, and
+        # sign_mode set per https://devnet.api.injective.dev/swagger/#/).
         quote_data = {
             "rfq_id": rfq_id,
             "market_id": market_id,
@@ -208,14 +217,14 @@ class MarketMaker:
             "maker": self.address,
             "taker": taker,
             "signature": signature,
+            "sign_mode": "v2",
             "maker_subaccount_nonce": maker_subaccount_nonce,
+            "contract_address": self.contract_address,
         }
         if min_fill_quantity is not None:
             quote_data["min_fill_quantity"] = min_fill_quantity
         if self.chain_id is not None:
             quote_data["chain_id"] = self.chain_id
-        if self.contract_address is not None:
-            quote_data["contract_address"] = self.contract_address
         
         logger.info(f"Sending quote for RFQ#{rfq_id}: price={price}")
         await self._ws_client.send_quote(quote_data)

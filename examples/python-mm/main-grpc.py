@@ -1,6 +1,17 @@
 """
 RFQ Market Maker Main Flow (gRPC)
 
+!!! v1 SIGNING — NEEDS PORT TO v2 (EIP-712) !!!
+The indexer requires `sign_mode` ("v1" or "v2") on every quote as of
+2026-04-29. The inline `to_sign_quote` + `sign_quote` below build the
+legacy v1 raw-JSON payload. The rfq-testing standard is v2 (EIP-712).
+Canonical v2 reference: src/rfq_test/crypto/eip712.py +
+PYTHON_BUILDING_GUIDE.md.
+
+To port: replace those two helpers with
+    from rfq_test.crypto.eip712 import sign_quote_v2
+and add `quote.sign_mode = "v2"` before sending.
+
 Uses native gRPC MakerStream (bidirectional) instead of WebSocket.
 
 Flow:
