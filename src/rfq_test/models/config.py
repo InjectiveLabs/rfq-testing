@@ -9,10 +9,13 @@ from pydantic import BaseModel, ConfigDict, Field
 class ChainConfig(BaseModel):
     """Chain connection configuration."""
     model_config = ConfigDict(extra="forbid")
-    
+
     grpc_endpoint: str
     lcd_endpoint: str
     chain_id: str
+    # EVM chain ID used in the EIP-712 v2 domain separator. NOT the cosmos
+    # chain_id — testnet+devnet are both 1439, mainnet will be 1776.
+    evm_chain_id: int
     tx_timeout_seconds: int = 5
     # Optional gRPC endpoints (pyinjective). If unset, code uses grpc_endpoint for all to avoid "dns:///" noise.
     grpc_exchange_endpoint: Optional[str] = None
@@ -75,7 +78,7 @@ class EnvironmentConfig(BaseModel):
     """Full environment configuration."""
     model_config = ConfigDict(extra="forbid")
     
-    environment: Literal["local", "testnet"]
+    environment: Literal["local", "devnet", "testnet"]
     chain: ChainConfig
     indexer: IndexerConfig
     contract: ContractConfig
@@ -111,8 +114,18 @@ class EnvironmentConfig(BaseModel):
     @property
     def signing_context(self) -> tuple[str, str]:
         """Single source for chain_id and contract address (signing and indexer quote).
-        
+
         Use this whenever building a quote signature or indexer quote payload
         so both contract verification and indexer validation see the same values.
         """
         return (self.chain.chain_id, self.contract.address)
+
+    @property
+    def signing_context_v2(self) -> tuple[int, str]:
+        """EIP-712 v2 signing inputs: (evm_chain_id, contract_bech32).
+
+        Pass to `sign_quote_v2` / `sign_conditional_order_v2`. The contract
+        address stays bech32 — the v2 signer derives the EVM form via
+        `bech32_to_evm` to bind it into the domain separator.
+        """
+        return (self.chain.evm_chain_id, self.contract.address)

@@ -8,6 +8,8 @@ chain:
   chain_stream_endpoint: "localhost:9999"
   lcd_endpoint: "http://localhost:10337"
   chain_id: "injective-888"
+  # EVM chain ID for the EIP-712 v2 domain separator.
+  evm_chain_id: 1439
   tx_timeout_seconds: 5
 
 indexer:

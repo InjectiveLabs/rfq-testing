@@ -1,0 +1,56 @@
+# Devnet environment configuration
+# RFQ devnet (https://devnet.api.injective.dev/swagger/) is the fastest-moving
+# environment — new contract / indexer changes land here first, including the
+# v2 (EIP-712) signing path documented in the Slack #rfq-eng thread on
+# 2026-04-29.
+environment: devnet
+
+chain:
+  grpc_endpoint: "devnet.injective.dev:9900"
+  lcd_endpoint: "https://devnet.lcd.injective.dev"
+  chain_id: "injective-777"
+  # EVM chain ID for the EIP-712 v2 domain separator (NOT the cosmos chain_id).
+  # Devnet and testnet share 1439; mainnet will be 1776.
+  evm_chain_id: 1439
+  tx_timeout_seconds: 10
+
+# RFQ Indexer API (devnet). Same gRPC-over-WS protocol as testnet.
+indexer:
+  ws_endpoint: "wss://devnet.rfq.ws.injective.dev/injective_rfq_rpc.InjectiveRfqRPC"
+  http_endpoint: "https://devnet.api.injective.dev"
+  grpc_endpoint: "devnet.rfq.grpc.injective.dev:443"
+  grpc_web_endpoint: "https://devnet.rfq.grpc.injective.dev/injective_rfq_rpc.InjectiveRfqRPC"
+
+contract:
+  address: "inj19g43wyj843ydkc845dcdea6su4mgfjwnpjz6h5"
+
+# Devnet markets mirror testnet (USDC perps). Verify with:
+#   curl https://devnet.lcd.injective.dev/injective/exchange/v2/derivative/markets
+markets:
+  - id: "0xdc70164d7120529c3cd84278c98df4151210c0447a65a2aab03459cf328de41e"
+    symbol: "INJ/USDC PERP"
+    base: "INJ"
+    quote: "USDC"
+    price_source: "oracle"
+    min_quantity: 1.0
+  - id: "0xfd704649cf3a516c0c145ab0111717c44640d8dbe52a462ae35cadf2f6df1515"
+    symbol: "BTC/USDC PERP"
+    base: "BTC"
+    quote: "USDC"
+    price_source: "oracle"
+    min_quantity: 0.001
+  - id: "0xdbb9bb072015238096f6e821ee9aab7affd741f8662a71acc14ac30ee6b687a5"
+    symbol: "LINK/USDC PERP"
+    base: "LINK"
+    quote: "USDC"
+    price_source: "oracle"
+    min_quantity: 0.1
+  - id: "0x135de28700392fb1c17d40d5170a74f30055a4ad522feddafec42fbbbb780897"
+    symbol: "ETH/USDC PERP"
+    base: "ETH"
+    quote: "USDC"
+    price_source: "oracle"
+    min_quantity: 0.01
+
+faucet:
+  enabled: false

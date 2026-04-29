@@ -7,6 +7,9 @@ chain:
   # Sentry LCD: used for mark price (v2 derivative markets) and chain queries
   lcd_endpoint: "https://testnet.sentry.lcd.injective.network"
   chain_id: "injective-888"
+  # EVM chain ID for the EIP-712 v2 domain separator (NOT the cosmos chain_id).
+  # Testnet and devnet share 1439; mainnet will be 1776.
+  evm_chain_id: 1439
   tx_timeout_seconds: 10
 
 # RFQ Indexer API (testnet). Server is gRPC-over-WS; path = /injective_rfq_rpc.InjectiveRfqRPC/<Method> (see indexer proto).

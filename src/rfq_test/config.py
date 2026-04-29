@@ -28,7 +28,7 @@ class Settings(BaseSettings):
         extra="ignore",
     )
     
-    # Environment selection: local | testnet
+    # Environment selection: local | devnet | testnet
     rfq_env: str = Field(default="local", alias="RFQ_ENV")
     
     # ============================================================
@@ -42,6 +42,15 @@ class Settings(BaseSettings):
     
 
     
+    # ============================================================
+    # Devnet Environment Credentials
+    # ============================================================
+    devnet_admin_private_key: Optional[str] = Field(default=None, alias="DEVNET_ADMIN_PRIVATE_KEY")
+    devnet_retail_private_key: Optional[str] = Field(default=None, alias="DEVNET_RETAIL_PRIVATE_KEY")
+    devnet_mm_private_key: Optional[str] = Field(default=None, alias="DEVNET_MM_PRIVATE_KEY")
+    devnet_load_test_mm_seed_phrase: Optional[str] = Field(default=None, alias="DEVNET_LOAD_TEST_MM_SEED_PHRASE")
+    devnet_load_test_retail_seed_phrase: Optional[str] = Field(default=None, alias="DEVNET_LOAD_TEST_RETAIL_SEED_PHRASE")
+
     # ============================================================
     # Testnet Environment Credentials
     # ============================================================
