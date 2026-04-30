@@ -2,9 +2,9 @@
  * RFQ Taker — Multi-Quote Aggregation Example
  *
  * Retail forwards MM signatures to AcceptQuote — it doesn't sign anything
- * itself. The wire RFQQuoteType now carries `sign_mode` ("v1" or "v2");
- * this script propagates whatever the MM set onto each ContractQuote so
- * the contract picks the right verifier per quote (defaults to "auto").
+ * itself. The wire RFQQuoteType carries a `sign_mode` field; this script
+ * always forwards "v2" (EIP-712) on each ContractQuote. The legacy "v1"
+ * raw-JSON path is being retired.
  *
  * Demonstrates accepting multiple quotes from different makers in a single
  * AcceptQuote transaction. The contract's `quotes` field is a Vec<Quote>
@@ -79,7 +79,7 @@ interface IndexerQuote {
   price: string;
   expiry: number | string; // Unix ms; cast defensively before use
   signature: string; // hex with 0x prefix, as delivered by the indexer
-  sign_mode?: "v1" | "v2" | "auto";
+  sign_mode?: "v2"; // v2 only — v1 is deprecated and will be rejected at launch
   status?: string;
 }
 
@@ -90,7 +90,7 @@ interface ContractQuote {
   price: string;
   expiry: { ts: number }; // wrapped enum
   signature: string; // base64
-  sign_mode?: "v1" | "v2" | "auto"; // contract defaults to "auto" if absent
+  sign_mode?: "v2"; // v2 only — v1 is deprecated and will be rejected at launch
 }
 
 /* -------------------------------------------------------------------------- */

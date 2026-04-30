@@ -2,11 +2,11 @@
  * RFQ – Retail User Main Flow
  *
  * Retail doesn't sign quotes — it consumes the MM's signature and forwards
- * it to the on-chain `accept_quote`. As of 2026-04-29 the wire RFQQuoteType
- * carries a new `sign_mode` field ("v1" or "v2" — see Onboarding §06 for
- * spec). This script preserves `sign_mode` from the indexer-delivered quote
- * onto the AcceptQuote payload so the contract picks the right verifier.
- * If you omit it, the contract falls back to `"auto"` (tries v2, then v1).
+ * it to the on-chain `accept_quote`. The wire RFQQuoteType carries a
+ * `sign_mode` field; this script always forwards "v2" (EIP-712). The
+ * legacy "v1" raw-JSON path is being retired, so the Quote interface
+ * below pins `sign_mode` to "v2" — TypeScript will reject any other value
+ * at compile time.
  *
  * Flow:
  * 0. Retail user has already granted permissions to RFQ contract
@@ -114,7 +114,7 @@ interface Quote {
   expiry: Expiry;
   signature: string; // Binary is typically base64 or hex encoded string
   nonce: number | undefined;
-  sign_mode?: "v1" | "v2" | "auto"; // forwarded from the indexer; contract defaults to "auto"
+  sign_mode?: "v2"; // v2 only — v1 is deprecated and will be rejected at launch
 }
 
 interface Settlement {

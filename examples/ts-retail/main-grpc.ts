@@ -2,8 +2,9 @@
  * RFQ – Retail User Main Flow (gRPC)
  *
  * Retail doesn't sign quotes — it forwards the MM's signature to AcceptQuote.
- * The wire RFQQuoteType now carries `sign_mode` ("v1" or "v2"); this script
- * propagates whatever the MM set onto the on-chain AcceptQuote payload.
+ * The wire RFQQuoteType carries a `sign_mode` field; this script always
+ * forwards "v2" (EIP-712). The legacy "v1" raw-JSON path is being retired,
+ * so the Quote interface below pins `sign_mode` to "v2".
  *
  * Uses native gRPC APIs instead of WebSocket.
  *
@@ -115,7 +116,7 @@ interface CollectedQuote {
   expiry: { ts?: number; h?: number };
   signature: string;
   nonce?: number;
-  sign_mode?: "v1" | "v2" | "auto";
+  sign_mode?: "v2"; // v2 only — v1 is deprecated and will be rejected at launch
 }
 
 /* -------------------------------------------------------------------------- */
@@ -161,8 +162,7 @@ async function acceptQuote(
   console.log("\n📌 Accepting quotes on-chain...");
 
   // Convert signatures from hex to base64 for the contract.
-  // sign_mode is forwarded so the contract picks the right verifier
-  // (defaults to "auto" if absent — tries v2, then v1).
+  // sign_mode is "v2" — the legacy v1 path is being retired.
   const contractQuotes = quotes.map((q) => ({
     maker: q.maker,
     margin: q.margin,
