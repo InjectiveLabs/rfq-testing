@@ -46,7 +46,8 @@ To respond, the MM builds a quote and signs it with the MM’s private key.
 
 The contract only accepts quotes signed by the registered maker address
 
-Signature format is Ethereum-style secp256k1 (65 bytes, v = 27/28)
+Signature format is secp256k1 (65 bytes). The v2 EIP-712 examples serialize
+`v` as compact y-parity (`0`/`1`), matching ws-client.
 
 Payload is hashed with keccak256
 
@@ -77,7 +78,7 @@ func signQuote(signQuote SignQuote, privKeyHex string) (string, error) {
 		return "", err
 	}
 
-	// ethers-style signature (65 bytes, v = 27/28)
+	// Legacy JSON path uses Ethereum-style recovery id.
 	sig[64] += 27
 
 	return hexutil.Encode(sig), nil

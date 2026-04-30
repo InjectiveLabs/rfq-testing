@@ -174,7 +174,7 @@ SignQuote(
   uint8   expiryKind,                // 0=timestamp_ms, 1=block_height
   uint64  expiryValue,
   string  minFillQuantity,           // "0" if absent
-  uint8   bindingKind                // hardcoded 1
+  uint8   bindingKind                // 1 if taker is present, 0 for blind quotes
 )
 ```
 
@@ -183,7 +183,7 @@ SignQuote(
 | `string` and decimal fields | `keccak256(utf8(s))` |
 | `address` | 20 bytes from `bech32_to_evm`, left-padded to 32 bytes |
 | `uint8` / `uint32` / `uint64` | big-endian, right-aligned in 32 bytes |
-| `bindingKind` | always `1` (binding quote) |
+| `bindingKind` | `1` for taker-specific quotes, `0` for blind quotes |
 | `minFillQuantity` | `"0"` when absent — never empty string |
 
 The final digest is `keccak256(0x19 || 0x01 || domainSeparator || msgHash)`.
@@ -280,12 +280,12 @@ def sign_quote_v2(
         _u(0, 1),  # expiryKind=timestamp
         _u(int(expiry_ms), 8),
         _s(str(min_fill_quantity) if min_fill_quantity is not None else "0"),
-        _u(1, 1),  # bindingKind
+        _u(1, 1),  # bindingKind = 1 because taker is present
     ))
     digest = keccak(b"\x19\x01" + domain_separator(evm_chain_id, verifying_contract_bech32) + keccak(msg))
     pk = bytes.fromhex(private_key.removeprefix("0x"))
     sig = Account.from_key(pk).unsafe_sign_hash(digest)
-    v = sig.v if sig.v >= 27 else sig.v + 27
+    v = sig.v - 27 if sig.v >= 27 else sig.v
     return "0x" + (sig.r.to_bytes(32, "big") + sig.s.to_bytes(32, "big") + bytes([v])).hex()
 ```
 

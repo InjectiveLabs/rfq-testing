@@ -118,13 +118,13 @@ def sign_quote_v2(
         _s(price),
         _u(expiry_kind, 1), _u(int(expiry_value), 8),
         _s(mfq),
-        _u(1, 1),                                          # bindingKind = 1
+        _u(1, 1),                                          # bindingKind = 1 (taker-specific)
     ))
     digest = keccak(primitive=b"\x19\x01" + domain_separator() + keccak(primitive=msg))
 
     pk = keys.PrivateKey(bytes.fromhex(trim_0x(private_key)))
     sig = pk.sign_msg_hash(digest)
-    v = sig.v + 27 if sig.v < 27 else sig.v
+    v = sig.v - 27 if sig.v >= 27 else sig.v
     return "0x" + (sig.r.to_bytes(32, "big") + sig.s.to_bytes(32, "big") + bytes([v])).hex()
 
 def eth_address_from_private_key(pk_hex: str) -> str:

@@ -13,7 +13,8 @@ domain separator combined with a hand-rolled `SignQuote` /
   * `string` and decimal fields -> `keccak256(utf8(s))` (32 bytes).
   * `address` -> 20 bytes from `bech32_to_evm`, left-padded to 32 bytes.
   * `uint8` / `uint32` / `uint64` -> big-endian, right-aligned in 32 bytes.
-  * Fixed terminator on `SignQuote`: `bindingKind = 1` (uint8).
+  * `SignQuote.bindingKind` is `1` when a taker address is present and `0`
+    for blind quotes.
   * Fixed terminators on `SignedTakerIntent`:
       - `unfilledActionKind = 0` (none) and `unfilledActionPrice = "0"`.
       - `cid` is `keccak256("")` when null.
@@ -76,7 +77,8 @@ TRIGGER_KIND_MARK_PRICE_LTE = 2
 
 UNFILLED_ACTION_KIND_NONE = 0  # only kind that's part of the v2 digest
 
-BINDING_KIND_BINDING = 1  # hardcoded final byte of every SignQuote digest
+BINDING_KIND_BLIND = 0
+BINDING_KIND_TAKER_SPECIFIC = 1
 
 
 # --- Address helpers ---------------------------------------------------
@@ -202,7 +204,7 @@ def sign_quote_digest(
     verifying_contract_bech32: str,
     market_id: str,
     rfq_id: int,
-    taker_bech32: str,
+    taker_bech32: Optional[str],
     direction: str,
     taker_margin: str,
     taker_quantity: str,
@@ -221,7 +223,7 @@ def sign_quote_digest(
         type_hash,
         _enc_string(market_id),
         _enc_u64(rfq_id),
-        _enc_addr(bech32_to_evm(taker_bech32)),
+        _enc_opt_addr(taker_bech32),
         _enc_u8(_direction_word(direction)),
         _enc_decimal(taker_margin),
         _enc_decimal(taker_quantity),
@@ -233,7 +235,9 @@ def sign_quote_digest(
         _enc_u8(expiry_kind),
         _enc_u64(expiry_value),
         _enc_decimal(min_fill_quantity if min_fill_quantity is not None else "0"),
-        _enc_u8(BINDING_KIND_BINDING),
+        _enc_u8(
+            BINDING_KIND_TAKER_SPECIFIC if taker_bech32 else BINDING_KIND_BLIND
+        ),
     ))
     domain_sep = domain_separator(evm_chain_id, verifying_contract_bech32)
     return _final_digest(domain_sep, keccak(msg))
@@ -309,14 +313,14 @@ def _normalize_pk(private_key: str) -> bytes:
 def _sign_digest(digest: bytes, private_key: str) -> str:
     """Sign a 32-byte digest with secp256k1 and return `0x` + r||s||v hex.
 
-    `v` is normalized to 27/28 to match the indexer's `verifyHash` (which
-    accepts both 0/1 and 27/28 forms and subtracts 27 internally).
+    `v` is serialized as compact y-parity (`0` or `1`), matching
+    ws-client/feat/changes-for-eip-712.
     """
     if len(digest) != 32:
         raise ValueError(f"digest must be 32 bytes, got {len(digest)}")
     account = Account.from_key(_normalize_pk(private_key))
     sig = account.unsafe_sign_hash(digest)
-    v = sig.v if sig.v >= 27 else sig.v + 27
+    v = sig.v - 27 if sig.v >= 27 else sig.v
     sig_bytes = sig.r.to_bytes(32, "big") + sig.s.to_bytes(32, "big") + bytes([v])
     return "0x" + sig_bytes.hex()
 
@@ -328,7 +332,7 @@ def sign_quote_v2(
     verifying_contract_bech32: str,
     market_id: str,
     rfq_id: int,
-    taker: str,
+    taker: Optional[str],
     direction: str,
     taker_margin: Union[str, Decimal],
     taker_quantity: Union[str, Decimal],

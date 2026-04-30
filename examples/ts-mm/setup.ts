@@ -15,6 +15,7 @@ import {
   PrivateKey,
 } from "@injectivelabs/sdk-ts";
 import { Network, getNetworkEndpoints } from "@injectivelabs/networks";
+import type { ChainId } from "@injectivelabs/ts-types";
 import dotenv from "dotenv";
 
 dotenv.config();
@@ -39,7 +40,7 @@ const SETTLEMENT_CONTRACT = null;
 
 // Network
 const NETWORK = (process.env.NETWORK as Network) || Network.TestnetSentry;
-const CHAIN_ID = process.env.CHAIN_ID || "injective-888";
+const CHAIN_ID = (process.env.CHAIN_ID || "injective-888") as ChainId;
 const ENDPOINTS = getNetworkEndpoints(NETWORK);
 
 /* -------------------------------------------------------------------------- */

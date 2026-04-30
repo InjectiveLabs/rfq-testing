@@ -22,8 +22,8 @@
     ]
   },
   "include": [
-    "retail-scripts/**/*.ts",
-    "mm-scripts/**/*.ts"
+    "ts-retail/**/*.ts",
+    "ts-mm/**/*.ts"
   ],
   "exclude": [
     "node_modules",

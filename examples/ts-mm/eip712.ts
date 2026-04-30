@@ -11,7 +11,7 @@
  * Standalone — no rfq_test dependency. Partners can vendor this file.
  */
 
-import { ethers, getBytes, keccak256, SigningKey, toUtf8Bytes } from "ethers";
+import { getBytes, hexlify, keccak256, SigningKey, toUtf8Bytes } from "ethers";
 
 export interface SignQuoteV2Input {
   privateKey: string;          // 0x-prefixed or bare hex
@@ -19,7 +19,7 @@ export interface SignQuoteV2Input {
   contractAddress: string;     // RFQ contract bech32, "inj1..."
   marketId: string;
   rfqId: number | bigint;
-  taker: string;               // bech32 inj1...
+  taker?: string | null;       // bech32 inj1...; omit/null for blind quotes
   direction: "long" | "short";
   takerMargin: string;         // FPDecimal string, byte-identical to wire
   takerQuantity: string;
@@ -114,6 +114,10 @@ function addressWord(b20: Uint8Array): Uint8Array {
   return out;
 }
 
+function zeroAddressWord(): Uint8Array {
+  return new Uint8Array(32);
+}
+
 function concat(...parts: Uint8Array[]): Uint8Array {
   const total = parts.reduce((n, p) => n + p.length, 0);
   const out = new Uint8Array(total);
@@ -162,7 +166,7 @@ export function signQuoteV2(input: SignQuoteV2Input): string {
         stringWord(SIGN_QUOTE_TYPE),
         stringWord(input.marketId),
         uintWord(BigInt(input.rfqId), 8),
-        addressWord(bech32ToEvm(input.taker)),
+        input.taker ? addressWord(bech32ToEvm(input.taker)) : zeroAddressWord(),
         uintWord(directionByte, 1),
         stringWord(input.takerMargin),
         stringWord(input.takerQuantity),
@@ -174,7 +178,7 @@ export function signQuoteV2(input: SignQuoteV2Input): string {
         uintWord(expiryKind, 1),
         uintWord(expiryValue, 8),
         stringWord(mfq),
-        uintWord(BigInt(1), 1), // bindingKind = 1 (every quote is binding)
+        uintWord(input.taker ? BigInt(1) : BigInt(0), 1),
       ),
     ),
   );
@@ -184,5 +188,9 @@ export function signQuoteV2(input: SignQuoteV2Input): string {
 
   const pkHex = "0x" + input.privateKey.replace(/^0x/, "");
   const key = new SigningKey(pkHex);
-  return ethers.Signature.from(key.sign(digest)).serialized;
+  const sig = key.sign(digest);
+  const yParity = sig.yParity ?? (sig.v >= 27 ? sig.v - 27 : sig.v);
+  return hexlify(
+    concat(getBytes(sig.r), getBytes(sig.s), new Uint8Array([yParity & 1])),
+  );
 }

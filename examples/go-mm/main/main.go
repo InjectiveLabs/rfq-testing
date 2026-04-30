@@ -215,9 +215,6 @@ func signQuoteV2(in signQuoteInput) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	if sig[64] < 27 {
-		sig[64] += 27
-	}
 	return hexutil.Encode(sig), nil
 }
 

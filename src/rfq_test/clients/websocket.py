@@ -1138,7 +1138,7 @@ class MakerStreamClient(BaseStreamClient):
                     "executed_quantity": q.executed_quantity,
                     "status": q.status,
                 }
-                for q in settlement.quotes
+                for q in getattr(settlement, "quotes", [])
             ],
         }
 

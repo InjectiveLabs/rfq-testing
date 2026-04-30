@@ -150,12 +150,12 @@ def sign_quote_v2(
         _s(price),
         _u(0, 1), _u(int(expiry_ms), 8),                   # expiryKind=timestamp
         _s(mfq),
-        _u(1, 1),                                          # bindingKind = 1
+        _u(1, 1),                                          # bindingKind = 1 (taker-specific)
     ))
     digest = keccak(primitive=b"\x19\x01" + _domain_separator(contract_address) + keccak(primitive=msg))
     pk = keys.PrivateKey(bytes.fromhex(trim_0x(private_key)))
     sig = pk.sign_msg_hash(digest)
-    v = sig.v + 27 if sig.v < 27 else sig.v
+    v = sig.v - 27 if sig.v >= 27 else sig.v
     return "0x" + (sig.r.to_bytes(32, "big") + sig.s.to_bytes(32, "big") + bytes([v])).hex()
 
 
