@@ -9,7 +9,7 @@ description = "E2E and Load Testing Framework for RFQ System"
 requires-python = ">=3.11"
 
 dependencies = [
-    "injective-py>=1.0.0",
+    "injective-py>=1.14.1",
     "websockets>=12.0",
     "eth-account>=0.11.0",
     "eth-hash[pycryptodome]>=0.5.0",

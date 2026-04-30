@@ -52,7 +52,8 @@ This overwrites `injective_rfq_rpc_pb2.py` and `injective_rfq_rpc_pb2_grpc.py`. 
 ### 1. Install
 
 ```bash
-pip install -e .
+pip install -U pip
+pip install -e ".[dev]"
 ```
 
 Or install dependencies directly:

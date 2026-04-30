@@ -219,6 +219,8 @@ signature = sign_quote_v2(
     min_fill_quantity=None,
 )
 # Already prefixed with "0x"; pass through to MakerStream + REST as-is.
+# The helper derives bindingKind from `taker`: taker set -> taker-bound,
+# taker empty/None -> blind. Do not pass binding_kind or nonce to this helper.
 ```
 
 ### Standalone v2 signing (no rfq-testing dep)
