@@ -121,7 +121,7 @@ The RFQ Indexer uses **gRPC-web over WebSocket** with protobuf framing:
 - **Subprotocol:** `grpc-ws`
 - **Framing:** `[1 byte flags][4 bytes length BE][protobuf payload]`
 - **Keep-alive:** Send `ping` message every 1 second
-- **Signing:** EIP-712 v2 (`SignQuote` / `SignedTakerIntent` typed-data digest → secp256k1 sign). Every quote and conditional order must carry `sign_mode: "v2"` — the indexer rejects empty values with `value of message.sign_mode must be one of "v1", "v2"`. v1 (raw-JSON keccak256) still exists in the contract / indexer for legacy clients but the rfq-testing repo signs v2 only. Spec lives in [`src/rfq_test/crypto/eip712.py`](src/rfq_test/crypto/eip712.py); the Go reference is in `injective-indexer` at `service/rfq/signature/eip712.go`.
+- **Signing:** EIP-712 v2 (`SignQuote` / `SignedTakerIntent` typed-data digest → secp256k1 sign). Every quote and conditional order must carry `sign_mode: "v2"`; missing or empty signing modes are rejected by the indexer. Spec lives in [`src/rfq_test/crypto/eip712.py`](src/rfq_test/crypto/eip712.py); the Go reference is in `injective-indexer` at `service/rfq/signature/eip712.go`.
 
 ### Maker Update Subscriptions
 
