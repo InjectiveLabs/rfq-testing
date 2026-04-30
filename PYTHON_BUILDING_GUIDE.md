@@ -190,7 +190,7 @@ The final digest is `keccak256(0x19 || 0x01 || domainSeparator || msgHash)`.
 
 ### Decimal-as-string trap
 
-Decimals are hashed as the raw UTF-8 string. `"4.5"` and `"4.50"` produce different digests. The wire price MUST equal the signed price byte-for-byte:
+Decimals are hashed as the raw UTF-8 string. `"4.5"` and `"4.50"` produce different digests, and the indexer expects canonical plain notation without trailing zeros. The wire price MUST equal the signed price byte-for-byte:
 
 > **Correct order:** compute price → quantize to tick → sign → send (wire = signed)
 > **Wrong order:** compute price → sign → quantize → send  ← signature mismatch!

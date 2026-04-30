@@ -156,7 +156,7 @@ mm_client = MakerStreamClient(
 )
 ```
 
-> **Quote signing note (v2 EIP-712):** Build the `SignQuote` typed-data digest (chainId / verifyingContract bound by the domain separator) and sign it with secp256k1 raw — no EIP-191 prefix, no JSON canonicalisation. Decimal fields are encoded as `keccak256(utf8(s))`, so the wire price MUST equal the signed price byte-for-byte (quantize to the market tick BEFORE signing). See [PYTHON_BUILDING_GUIDE.md — Quote Signing (v2)](PYTHON_BUILDING_GUIDE.md#quote-signing-v2) for the full recipe and `src/rfq_test/crypto/eip712.py` for the byte-compatible Python implementation.
+> **Quote signing note (v2 EIP-712):** Build the `SignQuote` typed-data digest (chainId / verifyingContract bound by the domain separator) and sign it with secp256k1 raw — no EIP-191 prefix, no JSON canonicalisation. Decimal fields are encoded as `keccak256(utf8(s))`, so the wire price MUST equal the signed price byte-for-byte (quantize to the market tick BEFORE signing and send canonical plain notation without trailing zeros). See [PYTHON_BUILDING_GUIDE.md — Quote Signing (v2)](PYTHON_BUILDING_GUIDE.md#quote-signing-v2) for the full recipe and `src/rfq_test/crypto/eip712.py` for the byte-compatible Python implementation.
 
 ### Conditional Orders (TP/SL)
 
