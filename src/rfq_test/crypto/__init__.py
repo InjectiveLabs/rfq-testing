@@ -1,10 +1,4 @@
-"""Cryptographic utilities for RFQ.
-
-Public API is v2 (EIP-712). The legacy v1 raw-JSON helpers
-(`sign_quote`, `sign_conditional_order`) are still importable from
-`rfq_test.crypto.signing` for forensic / regression testing, but every
-new caller should use the v2 entry points below.
-"""
+"""Cryptographic utilities for RFQ — EIP-712 v2 signing."""
 
 from rfq_test.crypto.eip712 import (
     bech32_to_evm,
