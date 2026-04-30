@@ -9,7 +9,7 @@ Python library and example scripts for interacting with the Injective RFQ system
 ```
 src/rfq_test/          # Core library
   ├── clients/         # WebSocket (MakerStream/TakerStream), Chain, Contract clients
-  ├── crypto/          # Quote signing (keccak256 + secp256k1), wallet management
+  ├── crypto/          # Quote signing (EIP-712 v2), wallet management
   ├── proto/           # Protobuf message definitions (gRPC-web framing)
   ├── actors/          # High-level MM, Retail, Admin actors
   ├── models/          # Type definitions and config models
@@ -29,7 +29,7 @@ examples/              # Standalone test scripts
 - **RFQ quoting:** MakerStream WebSocket for receiving requests and sending quotes
 - **Conditional orders (TP/SL):** TakerStream WebSocket + REST API for trigger-based orders that execute automatically when mark price crosses a threshold
 - **On-chain settlement:** AcceptQuote, CancelIntentLane, CancelAllIntents
-- **Quote signing:** keccak256 + secp256k1 with the exact field order required by the contract
+- **Quote signing:** EIP-712 v2 typed-data digest with secp256k1, byte-compatible with the contract verifier; `sign_mode="v2"` on the wire
 
 ## Regenerating Proto Code
 
@@ -122,7 +122,7 @@ The RFQ Indexer uses **gRPC-web over WebSocket** with protobuf framing:
 - **Subprotocol:** `grpc-ws`
 - **Framing:** `[1 byte flags][4 bytes length BE][protobuf payload]`
 - **Keep-alive:** Send `ping` message every 1 second
-- **Signing:** EIP-712 v2 (`SignQuote` / `SignedTakerIntent` typed-data digest → secp256k1 sign). Every quote and conditional order must carry `sign_mode: "v2"`; missing or empty signing modes are rejected by the indexer. Spec lives in [`src/rfq_test/crypto/eip712.py`](src/rfq_test/crypto/eip712.py); the Go reference is in `injective-indexer` at `service/rfq/signature/eip712.go`.
+- **Signing:** EIP-712 v2 (`SignQuote` / `SignedTakerIntent` typed-data digest → secp256k1 sign). Every quote and conditional order must carry `sign_mode: "v2"`; missing or empty signing modes are rejected by the indexer. Spec lives in [`src/rfq_test/crypto/eip712.py`](src/rfq_test/crypto/eip712.py); see [PYTHON_BUILDING_GUIDE.md — Quote Signing (v2)](PYTHON_BUILDING_GUIDE.md#quote-signing-v2) for the full recipe.
 
 ### Maker Update Subscriptions
 
