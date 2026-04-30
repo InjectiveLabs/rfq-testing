@@ -195,6 +195,35 @@ Decimals are hashed as the raw UTF-8 string. `"4.5"` and `"4.50"` produce differ
 > **Correct order:** compute price → quantize to tick → sign → send (wire = signed)
 > **Wrong order:** compute price → sign → quantize → send  ← signature mismatch!
 
+#### One helper that does it right
+
+Every other normalization the indexer cares about reduces to this one transform:
+quantize to the tick, then strip trailing zeros (and the dangling decimal point
+if there's nothing left after it).
+
+```python
+from decimal import Decimal, ROUND_DOWN
+
+def to_canonical(x, tick) -> str:
+    """Quantize x to the market tick and emit the indexer-canonical string."""
+    return format(
+        Decimal(str(x)).quantize(Decimal(str(tick)), rounding=ROUND_DOWN).normalize(),
+        "f",   # plain notation, never scientific
+    )
+
+# 4.50     → "4.5"     (any market with a fractional tick)
+# 76462.0  → "76462"   (BTC/USDC perp, tick "1")
+# 110.00   → "110"     (INJ/USDC perp, tick "0.01")
+```
+
+The whole-integer case (`"76462.0"` → `"76462"`) is the one that bites partners
+most often: a price computed with `f"{mark:.1f}"` or `str(float(...))` will carry
+a trailing `.0` and the indexer rejects it with
+`price "76462.0": not in canonical decimal form (use plain notation without trailing zeros or scientific notation)`.
+Run every decimal field (price, taker_margin, taker_quantity, maker_margin,
+maker_quantity, min_fill_quantity, trigger_price, …) through `to_canonical`
+before signing, then send those exact strings on the wire.
+
 ### Use the library
 
 ```python
