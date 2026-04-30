@@ -165,8 +165,9 @@ message RFQQuoteType {
 	bool price_check = 21;
 	// Client ID from the originating request
 	string client_id = 22;
-	// Signature scheme used for the quote: "v1" (raw JSON keccak256) or "v2"
-// (EIP-712).
+	// Signature scheme. New clients: "v2" (EIP-712 typed-data digest).
+// Legacy "v1" (raw JSON keccak256) is deprecated and will be rejected at
+// launch.
 	string sign_mode = 23;
 }
 // Expiry with timestamp and block height
@@ -247,8 +248,9 @@ message RFQProcessedQuoteType {
 	bool price_check = 21;
 	// Client ID from the originating request
 	string client_id = 22;
-	// Signature scheme used for the quote: "v1" (raw JSON keccak256) or "v2"
-// (EIP-712).
+	// Signature scheme. New clients: "v2" (EIP-712 typed-data digest).
+// Legacy "v1" (raw JSON keccak256) is deprecated and will be rejected at
+// launch.
 	string sign_mode = 23;
 }
 
@@ -359,8 +361,9 @@ message CreateConditionalOrderRequest {
 // Then: signature = secp256k1_sign(Keccak256(canonical_json),
 // taker_private_key)
 	string signature = 2;
-	// Signature scheme used for the conditional order: "v1" (raw JSON keccak256)
-// or "v2" (EIP-712).
+	// Signature scheme. New clients: "v2" (EIP-712 typed-data digest).
+// Legacy "v1" (raw JSON keccak256) is deprecated and will be rejected at
+// launch.
 	string sign_mode = 3;
 }
 // Conditional order input matching the contract's SignedTakerIntent payload
@@ -478,8 +481,9 @@ message TakerStreamStreamingRequest {
 	ConditionalOrderInput conditional_order = 3;
 	// Signature for the conditional order
 	string conditional_order_signature = 4;
-	// Signature scheme for the conditional order: "v1" (raw JSON keccak256) or
-// "v2" (EIP-712).
+	// Signature scheme. New clients: "v2" (EIP-712 typed-data digest).
+// Legacy "v1" (raw JSON keccak256) is deprecated and will be rejected at
+// launch.
 	string conditional_order_sign_mode = 5;
 }
 // RFQ request

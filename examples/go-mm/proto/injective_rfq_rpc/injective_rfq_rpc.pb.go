@@ -617,8 +617,9 @@ type RFQQuoteType struct {
 	PriceCheck bool `protobuf:"varint,21,opt,name=price_check,json=priceCheck,proto3" json:"price_check,omitempty"`
 	// Client ID from the originating request
 	ClientId string `protobuf:"bytes,22,opt,name=client_id,json=clientId,proto3" json:"client_id,omitempty"`
-	// Signature scheme used for the quote: "v1" (raw JSON keccak256) or "v2"
-	// (EIP-712).
+	// Signature scheme. New clients: "v2" (EIP-712 typed-data digest).
+	// Legacy "v1" (raw JSON keccak256) is deprecated and will be rejected at
+	// launch.
 	SignMode      string `protobuf:"bytes,23,opt,name=sign_mode,json=signMode,proto3" json:"sign_mode,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -1076,8 +1077,9 @@ type RFQProcessedQuoteType struct {
 	PriceCheck bool `protobuf:"varint,21,opt,name=price_check,json=priceCheck,proto3" json:"price_check,omitempty"`
 	// Client ID from the originating request
 	ClientId string `protobuf:"bytes,22,opt,name=client_id,json=clientId,proto3" json:"client_id,omitempty"`
-	// Signature scheme used for the quote: "v1" (raw JSON keccak256) or "v2"
-	// (EIP-712).
+	// Signature scheme. New clients: "v2" (EIP-712 typed-data digest).
+	// Legacy "v1" (raw JSON keccak256) is deprecated and will be rejected at
+	// launch.
 	SignMode      string `protobuf:"bytes,23,opt,name=sign_mode,json=signMode,proto3" json:"sign_mode,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -1860,8 +1862,9 @@ type CreateConditionalOrderRequest struct {
 	// Then: signature = secp256k1_sign(Keccak256(canonical_json),
 	// taker_private_key)
 	Signature string `protobuf:"bytes,2,opt,name=signature,proto3" json:"signature,omitempty"`
-	// Signature scheme used for the conditional order: "v1" (raw JSON keccak256)
-	// or "v2" (EIP-712).
+	// Signature scheme. New clients: "v2" (EIP-712 typed-data digest).
+	// Legacy "v1" (raw JSON keccak256) is deprecated and will be rejected at
+	// launch.
 	SignMode      string `protobuf:"bytes,3,opt,name=sign_mode,json=signMode,proto3" json:"sign_mode,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -2516,8 +2519,9 @@ type TakerStreamStreamingRequest struct {
 	ConditionalOrder *ConditionalOrderInput `protobuf:"bytes,3,opt,name=conditional_order,json=conditionalOrder,proto3" json:"conditional_order,omitempty"`
 	// Signature for the conditional order
 	ConditionalOrderSignature string `protobuf:"bytes,4,opt,name=conditional_order_signature,json=conditionalOrderSignature,proto3" json:"conditional_order_signature,omitempty"`
-	// Signature scheme for the conditional order: "v1" (raw JSON keccak256) or
-	// "v2" (EIP-712).
+	// Signature scheme. New clients: "v2" (EIP-712 typed-data digest).
+	// Legacy "v1" (raw JSON keccak256) is deprecated and will be rejected at
+	// launch.
 	ConditionalOrderSignMode string `protobuf:"bytes,5,opt,name=conditional_order_sign_mode,json=conditionalOrderSignMode,proto3" json:"conditional_order_sign_mode,omitempty"`
 	unknownFields            protoimpl.UnknownFields
 	sizeCache                protoimpl.SizeCache
