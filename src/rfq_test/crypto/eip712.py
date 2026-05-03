@@ -44,7 +44,7 @@ EIP712_DOMAIN_TYPE = (
 
 SIGN_QUOTE_TYPE = (
     b"SignQuote("
-    b"string marketId,uint64 rfqId,address taker,uint8 takerDirection,"
+    b"uint64 evmChainId,string marketId,uint64 rfqId,address taker,uint8 takerDirection,"
     b"string takerMargin,string takerQuantity,address maker,"
     b"uint32 makerSubaccountNonce,string makerQuantity,string makerMargin,"
     b"string price,uint8 expiryKind,uint64 expiryValue,string minFillQuantity,"
@@ -54,7 +54,7 @@ SIGN_QUOTE_TYPE = (
 
 SIGNED_TAKER_INTENT_TYPE = (
     b"SignedTakerIntent("
-    b"uint8 version,address taker,uint64 epoch,uint64 rfqId,string marketId,"
+    b"uint8 version,uint64 evmChainId,address taker,uint64 epoch,uint64 rfqId,string marketId,"
     b"uint32 subaccountNonce,uint64 laneVersion,uint64 deadlineMs,"
     b"uint8 direction,string quantity,string margin,string worstPrice,"
     b"string minTotalFillQuantity,uint8 triggerKind,string triggerPrice,"
@@ -221,6 +221,7 @@ def sign_quote_digest(
     type_hash = keccak(SIGN_QUOTE_TYPE)
     msg = b"".join((
         type_hash,
+        _enc_u64(evm_chain_id),
         _enc_string(market_id),
         _enc_u64(rfq_id),
         _enc_opt_addr(taker_bech32),
@@ -280,6 +281,7 @@ def signed_taker_intent_digest(
     msg = b"".join((
         type_hash,
         _enc_u8(version),
+        _enc_u64(evm_chain_id),
         _enc_addr(bech32_to_evm(taker_bech32)),
         _enc_u64(epoch),
         _enc_u64(rfq_id),

@@ -77,6 +77,7 @@ interface Quote {
   taker?: string;
   signature: string;
   sign_mode: "v2";         // required by indexer
+  evm_chain_id: number;
   chain_id: string;
   contract_address: string;
   maker_subaccount_nonce: number;
@@ -137,6 +138,7 @@ async function sendQuote(
     taker: request.request_address,
     signature,
     sign_mode: "v2",
+    evm_chain_id: EVM_CHAIN_ID,
     maker_subaccount_nonce: makerSubaccountNonce,
   };
 

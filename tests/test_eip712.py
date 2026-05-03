@@ -52,10 +52,10 @@ def test_sign_quote_v2_matches_ws_client_reference():
         min_fill_quantity="0.001",
     )
 
-    assert digest.hex() == "c3b67f4ba971fffdd3cab3270207d47f5e3ab886fcb951ce8bb49a65dcc342b3"
+    assert digest.hex() == "8921e261b8a81e3e5d41df57db50e4c956c6ecf45d49427a25048c67de8d077e"
     assert signature == (
-        "0xa743a5b448cd163a5054c558f1a71d6c626d05a80d45fd1d6e485b5c9e765452"
-        "65b83b50d6970dfd7ccdc6f2f151f7891a0a50fb9c6ba88b0515ece648259ee700"
+        "0xd917f7d61959b08889c2ae61a18fe6bfd1afb0a9b18b284989574f70493015cd5"
+        "d9e25ba6acf1dd7fd2013ea0c72fea1d036dabc0873fe8ecdb8a8aaaf1b2a4e00"
     )
     assert bytes.fromhex(signature[2:])[-1] in (0, 1)
     assert Account._recover_hash(digest, signature=bytes.fromhex(signature[2:])) == ETH_ADDRESS
@@ -102,10 +102,10 @@ def test_signed_taker_intent_v2_matches_ws_client_reference():
         trigger_price="3",
     )
 
-    assert digest.hex() == "c0f6f749dd69b99249d0cac24b7579c63f6f582f518de0117859d8a806d03c51"
+    assert digest.hex() == "4173384ed7ac0b850b7f2be95667aa2b17b41da527b7058848a6949d202763ee"
     assert signature == (
-        "0x315bc1d16291a9496a8783fcdc41eb51c4b46416e78ec79cb37c183f5ae788f1"
-        "63be0b92b10fc7629ad7bcfa2dfd8908c05e45bb957c8c279081b098cef9155900"
+        "0x47f88e7957f011a075acef768839c7a21e4fdaf50742a2ba6dbf240fe0d0dae61"
+        "9c10b86a6bd3ff535bba5e8445c22407b177d8f50aab95412fff76c0ca714a600"
     )
     assert bytes.fromhex(signature[2:])[-1] in (0, 1)
     assert Account._recover_hash(digest, signature=bytes.fromhex(signature[2:])) == ETH_ADDRESS

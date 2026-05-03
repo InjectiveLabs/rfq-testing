@@ -46,7 +46,7 @@ const DOMAIN_TYPE =
   "EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)";
 
 const SIGN_QUOTE_TYPE =
-  "SignQuote(string marketId,uint64 rfqId,address taker,uint8 takerDirection," +
+  "SignQuote(uint64 evmChainId,string marketId,uint64 rfqId,address taker,uint8 takerDirection," +
   "string takerMargin,string takerQuantity,address maker,uint32 makerSubaccountNonce," +
   "string makerQuantity,string makerMargin,string price,uint8 expiryKind," +
   "uint64 expiryValue,string minFillQuantity,uint8 bindingKind)";
@@ -176,6 +176,7 @@ export function signQuoteV2(input: SignQuoteV2Input): string {
     keccak256(
       concat(
         stringWord(SIGN_QUOTE_TYPE),
+        uintWord(BigInt(input.evmChainId), 8),
         stringWord(input.marketId),
         uintWord(BigInt(input.rfqId), 8),
         input.taker ? addressWord(bech32ToEvm(input.taker)) : zeroAddressWord(),

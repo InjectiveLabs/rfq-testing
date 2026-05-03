@@ -8,9 +8,9 @@ import (
 // TS test in onboarding.html should produce the same r||s||v hex.
 //
 // Reference (Python lib output):
-//   0xd31c33b8f17fa16b1bcdbc94cdf7596b6d57d0eec51cbcdd7c1cac2cd774c02b36523d0e711b58096e97c650c1e758f9020121226e935acb9fa7bdbcf8cb63d501
+//   0xe6d576c24befa4c36ee78e9f10144e426e8142c495d2392714eddc975d58e72d2988fcf40565ddd45606bf74d19015084225a9b2e953514bb3f7a1db11f266ca00
 func TestSignQuoteV2_MatchesPythonReference(t *testing.T) {
-	const expected = "0xd31c33b8f17fa16b1bcdbc94cdf7596b6d57d0eec51cbcdd7c1cac2cd774c02b36523d0e711b58096e97c650c1e758f9020121226e935acb9fa7bdbcf8cb63d501"
+	const expected = "0xe6d576c24befa4c36ee78e9f10144e426e8142c495d2392714eddc975d58e72d2988fcf40565ddd45606bf74d19015084225a9b2e953514bb3f7a1db11f266ca00"
 
 	sig, err := signQuoteV2(signQuoteInput{
 		PrivateKey:           "1111111111111111111111111111111111111111111111111111111111111111",

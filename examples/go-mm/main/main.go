@@ -74,6 +74,7 @@ type Quote struct {
 	Taker           string  `json:"taker,omitempty"`
 	Signature       string  `json:"signature"`
 	SignMode        string  `json:"sign_mode"`            // required by indexer ("v2" for everything this script signs)
+	EvmChainID      uint64  `json:"evm_chain_id"`
 	Nonce           *uint64 `json:"nonce,omitempty"`
 }
 
@@ -87,7 +88,7 @@ type Quote struct {
 
 const eip712DomainType = "EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)"
 
-const signQuoteType = "SignQuote(string marketId,uint64 rfqId,address taker,uint8 takerDirection," +
+const signQuoteType = "SignQuote(uint64 evmChainId,string marketId,uint64 rfqId,address taker,uint8 takerDirection," +
 	"string takerMargin,string takerQuantity,address maker,uint32 makerSubaccountNonce," +
 	"string makerQuantity,string makerMargin,string price,uint8 expiryKind," +
 	"uint64 expiryValue,string minFillQuantity,uint8 bindingKind)"
@@ -181,8 +182,9 @@ func signQuoteV2(in signQuoteInput) (string, error) {
 		mfq = "0"
 	}
 
-	buf := make([]byte, 0, 32*16)
+	buf := make([]byte, 0, 32*17)
 	buf = append(buf, ethcrypto.Keccak256([]byte(signQuoteType))...)
+	buf = append(buf, encU64(in.EvmChainID)...)
 	buf = append(buf, encString(in.MarketID)...)
 	buf = append(buf, encU64(in.RfqID)...)
 	buf = append(buf, encAddr(takerAddr)...)
@@ -299,6 +301,7 @@ func sendQuote(
 		Taker:           takerAddress,
 		Signature:       sig,
 		SignMode:        "v2",
+		EvmChainID:      evmChainID,
 	}
 
 	msg := map[string]any{

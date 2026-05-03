@@ -143,6 +143,7 @@ function sendQuote(stream: grpc.ClientDuplexStream<any, any>, request: any, pric
     taker: request.request_address,
     signature,
     sign_mode: "v2",                       // required by indexer
+    evm_chain_id: EVM_CHAIN_ID,
     maker_subaccount_nonce: makerSubaccountNonce,
   };
 

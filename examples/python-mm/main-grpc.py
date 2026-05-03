@@ -88,7 +88,7 @@ EIP712_DOMAIN_TYPE = (
     b"EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)"
 )
 SIGN_QUOTE_TYPE = (
-    b"SignQuote(string marketId,uint64 rfqId,address taker,uint8 takerDirection,"
+    b"SignQuote(uint64 evmChainId,string marketId,uint64 rfqId,address taker,uint8 takerDirection,"
     b"string takerMargin,string takerQuantity,address maker,"
     b"uint32 makerSubaccountNonce,string makerQuantity,string makerMargin,"
     b"string price,uint8 expiryKind,uint64 expiryValue,string minFillQuantity,"
@@ -145,6 +145,7 @@ def sign_quote_v2(
     mfq = "0" if min_fill_quantity is None else min_fill_quantity
     msg = b"".join((
         keccak(primitive=SIGN_QUOTE_TYPE),
+        _u(EVM_CHAIN_ID, 8),
         _s(market_id), _u(int(rfq_id), 8),
         _addr(bech32_to_evm(taker_inj)), _u(direction_byte, 1),
         _s(taker_margin), _s(taker_quantity),
@@ -272,6 +273,7 @@ async def send_quote(
         taker=request.request_address,
         signature=sig,
         sign_mode="v2",                      # required by indexer
+        evm_chain_id=EVM_CHAIN_ID,
         maker_subaccount_nonce=0,
     )
 

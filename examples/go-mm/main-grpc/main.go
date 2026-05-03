@@ -98,7 +98,7 @@ func isLoopbackTarget(target string) bool {
 const eip712DomainType = "EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)"
 const streamAuthChallengeType = "StreamAuthChallenge(uint64 evmChainId,address maker,bytes32 nonce,uint64 expiresAt)"
 
-const signQuoteType = "SignQuote(string marketId,uint64 rfqId,address taker,uint8 takerDirection," +
+const signQuoteType = "SignQuote(uint64 evmChainId,string marketId,uint64 rfqId,address taker,uint8 takerDirection," +
 	"string takerMargin,string takerQuantity,address maker,uint32 makerSubaccountNonce," +
 	"string makerQuantity,string makerMargin,string price,uint8 expiryKind," +
 	"uint64 expiryValue,string minFillQuantity,uint8 bindingKind)"
@@ -191,8 +191,9 @@ func signQuoteV2(in signQuoteInput) (string, error) {
 		mfq = "0"
 	}
 
-	buf := make([]byte, 0, 32*16)
+	buf := make([]byte, 0, 32*17)
 	buf = append(buf, ethcrypto.Keccak256([]byte(signQuoteType))...)
+	buf = append(buf, encU64(in.EvmChainID)...)
 	buf = append(buf, encString(in.MarketID)...)
 	buf = append(buf, encU64(in.RfqID)...)
 	buf = append(buf, encAddr(takerAddr)...)
@@ -328,6 +329,7 @@ func sendQuote(
 		Taker:           req.RequestAddress,
 		Signature:       sig,
 		SignMode:        "v2", // required by indexer
+		EvmChainId:      evmChainID,
 	}
 
 	fmt.Printf("\n📤 Sending quote (price=%s)\n", priceStr)

@@ -52,7 +52,7 @@ EIP712_DOMAIN_TYPE = (
     b"EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)"
 )
 SIGN_QUOTE_TYPE = (
-    b"SignQuote(string marketId,uint64 rfqId,address taker,uint8 takerDirection,"
+    b"SignQuote(uint64 evmChainId,string marketId,uint64 rfqId,address taker,uint8 takerDirection,"
     b"string takerMargin,string takerQuantity,address maker,"
     b"uint32 makerSubaccountNonce,string makerQuantity,string makerMargin,"
     b"string price,uint8 expiryKind,uint64 expiryValue,string minFillQuantity,"
@@ -110,6 +110,7 @@ def sign_quote_v2(
 
     msg = b"".join((
         keccak(primitive=SIGN_QUOTE_TYPE),
+        _u(EVM_CHAIN_ID, 8),
         _s(market_id), _u(int(rfq_id), 8),
         _addr(bech32_to_evm(taker_inj)), _u(direction_byte, 1),
         _s(taker_margin), _s(taker_quantity),
@@ -178,6 +179,7 @@ class Quote:
     nonce: Optional[int] = None
     maker_subaccount_nonce: int = 0
     min_fill_quantity: Optional[str] = None
+    evm_chain_id: int = EVM_CHAIN_ID
 
 async def send_quote(
     ws,
@@ -215,6 +217,7 @@ async def send_quote(
         nonce=0,
         maker_subaccount_nonce=maker_subaccount_nonce,
         min_fill_quantity=min_fill_quantity,
+        evm_chain_id=EVM_CHAIN_ID,
     )
 
     # v2 EIP-712 — the digest binds the TAKER's direction (req.direction),

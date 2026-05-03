@@ -869,6 +869,8 @@ class MakerStreamClient(BaseStreamClient):
             "maker_subaccount_nonce": int(quote_data.get("maker_subaccount_nonce", 0)),
             "sign_mode": sign_mode,
         }
+        if quote_data.get("evm_chain_id") is not None:
+            quote_kwargs["evm_chain_id"] = int(quote_data["evm_chain_id"])
         if min_fill_quantity is not None:
             quote_kwargs["min_fill_quantity"] = str(min_fill_quantity)
 

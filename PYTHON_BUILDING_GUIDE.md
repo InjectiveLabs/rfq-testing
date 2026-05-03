@@ -266,7 +266,7 @@ EIP712_DOMAIN_TYPE = (
     b"EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)"
 )
 SIGN_QUOTE_TYPE = (
-    b"SignQuote(string marketId,uint64 rfqId,address taker,uint8 takerDirection,"
+    b"SignQuote(uint64 evmChainId,string marketId,uint64 rfqId,address taker,uint8 takerDirection,"
     b"string takerMargin,string takerQuantity,address maker,uint32 makerSubaccountNonce,"
     b"string makerQuantity,string makerMargin,string price,uint8 expiryKind,"
     b"uint64 expiryValue,string minFillQuantity,uint8 bindingKind)"
@@ -303,6 +303,7 @@ def sign_quote_v2(
 ) -> str:
     msg = b"".join((
         keccak(SIGN_QUOTE_TYPE),
+        _u(int(evm_chain_id), 8),
         _s(market_id), _u(int(rfq_id), 8),
         _addr(bech32_to_evm(taker)), _u(_direction(direction), 1),
         _s(str(taker_margin)), _s(str(taker_quantity)),
