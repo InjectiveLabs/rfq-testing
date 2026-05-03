@@ -8,6 +8,7 @@ remains bidirectional because maker-scoped subscriptions still rely on stream
 metadata.
 """
 import asyncio
+import json
 import logging
 import os
 import sys
@@ -55,6 +56,44 @@ _STREAM_CLOSE = object()
 STREAM_AUTH_CHALLENGE_TYPE = (
     b"StreamAuthChallenge(uint64 evmChainId,address maker,bytes32 nonce,uint64 expiresAt)"
 )
+
+
+def _event_attr(event: dict, key: str) -> str | None:
+    for attr in event.get("attributes", []):
+        if attr.get("key") == key:
+            return attr.get("value")
+    return None
+
+
+def assert_accept_quote_verified(tx_result: dict) -> None:
+    """Fail the smoke test if AcceptQuote executed but rejected RFQ quotes internally."""
+    errors: list[str] = []
+    saw_accept_results = False
+    for event in tx_result.get("events", []):
+        event_type = event.get("type")
+        if event_type == "wasm-rfq-accept-quote":
+            raw_results = _event_attr(event, "results")
+            if not raw_results:
+                continue
+            saw_accept_results = True
+            try:
+                results = json.loads(raw_results)
+            except json.JSONDecodeError:
+                errors.append(f"could not parse accept_quote results: {raw_results}")
+                continue
+            for result in results:
+                quote_error = result.get("e") or result.get("error")
+                if quote_error:
+                    maker = result.get("maker", "unknown maker")
+                    errors.append(f"{maker}: {quote_error}")
+        elif event_type == "wasm-rfq-orderbook-fallback-failed":
+            fallback_error = _event_attr(event, "error") or _event_attr(event, "err")
+            errors.append(f"orderbook fallback failed: {fallback_error or event}")
+
+    if not saw_accept_results:
+        raise RuntimeError("AcceptQuote result event was not found in the confirmed tx")
+    if errors:
+        raise RuntimeError("AcceptQuote did not verify RFQ quote(s): " + "; ".join(errors))
 
 
 def _enc_u64(v: int) -> bytes:
@@ -685,7 +724,19 @@ async def main():
         "signature": best_quote["signature"],
         "sign_mode": best_quote.get("sign_mode") or "v2",
         "evm_chain_id": int(best_quote.get("evm_chain_id") or evm_chain_id),
+        "maker_subaccount_nonce": int(
+            best_quote.get("maker_subaccount_nonce")
+            or sent_quote.get("maker_subaccount_nonce")
+            or 0
+        ),
     }
+    signed_min_fill_quantity = (
+        best_quote.get("min_fill_quantity")
+        if best_quote.get("min_fill_quantity") not in (None, "")
+        else sent_quote.get("min_fill_quantity") or min_fill_quantity
+    )
+    if signed_min_fill_quantity not in (None, ""):
+        contract_quote["min_fill_quantity"] = str(signed_min_fill_quantity)
 
     settlement_cid = f"tc-cli-{uuid.uuid4()}"
     print(f"   📝 Submitting AcceptQuote...")
@@ -712,6 +763,10 @@ async def main():
         print(f"\n   🎉 SETTLEMENT SUCCESSFUL!")
         print(f"   📜 TX Hash: {tx_hash}")
         print(f"   🔗 https://testnet.explorer.injective.network/transaction/{tx_hash}")
+
+        tx_result = await contract_client._wait_for_tx_result(tx_hash, timeout=5.0)
+        assert_accept_quote_verified(tx_result)
+        print("   ✅ On-chain RFQ quote verification passed")
 
         try:
             quote_update, settlement_update = await mm_wait_for_post_settlement_updates(

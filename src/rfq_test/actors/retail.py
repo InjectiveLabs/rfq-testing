@@ -198,6 +198,15 @@ class RetailUser:
             "expiry": quote["expiry"],
             "signature": quote["signature"],
         }
+        for field in (
+            "sign_mode",
+            "evm_chain_id",
+            "maker_subaccount_nonce",
+            "min_fill_quantity",
+        ):
+            value = quote.get(field)
+            if value not in (None, ""):
+                contract_quote[field] = value
         
         logger.info(f"Accepting quote from {quote['maker']} (qty {quote['quantity']} of {quantity})")
         return await self.contract_client.accept_quote(

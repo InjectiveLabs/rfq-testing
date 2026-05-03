@@ -325,7 +325,21 @@ async def main():
         "price": best_quote["price"],
         "expiry": int(best_quote["expiry"]),
         "signature": best_quote["signature"],
+        "sign_mode": best_quote.get("sign_mode") or sent_quote.get("sign_mode") or "v2",
+        "evm_chain_id": int(best_quote.get("evm_chain_id") or sent_quote.get("evm_chain_id") or evm_chain_id),
+        "maker_subaccount_nonce": int(
+            best_quote.get("maker_subaccount_nonce")
+            or sent_quote.get("maker_subaccount_nonce")
+            or 0
+        ),
     }
+    signed_min_fill_quantity = (
+        best_quote.get("min_fill_quantity")
+        if best_quote.get("min_fill_quantity") not in (None, "")
+        else sent_quote.get("min_fill_quantity")
+    )
+    if signed_min_fill_quantity not in (None, ""):
+        contract_quote["min_fill_quantity"] = str(signed_min_fill_quantity)
 
     print(f"   📝 Submitting AcceptQuote...")
     print(f"      RFQ ID:    {rfq_id}")

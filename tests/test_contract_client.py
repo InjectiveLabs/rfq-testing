@@ -60,6 +60,10 @@ async def test_accept_quote_normalizes_expiry_and_signature_for_contract():
                     "price": "2.5",
                     "expiry": 1772851186901,
                     "signature": "0x" + "ab" * 65,
+                    "sign_mode": "v2",
+                    "evm_chain_id": 1439,
+                    "maker_subaccount_nonce": 0,
+                    "min_fill_quantity": "0.01",
                 }
             ],
             rfq_id="1772850886884",
@@ -84,6 +88,10 @@ async def test_accept_quote_normalizes_expiry_and_signature_for_contract():
     assert quote["expiry"] == {"ts": 1772851186901}
     assert quote["signature"] != "0x" + "ab" * 65
     assert quote["signature"].endswith("=")
+    assert quote["sign_mode"] == "v2"
+    assert quote["evm_chain_id"] == 1439
+    assert quote["maker_subaccount_nonce"] == 0
+    assert quote["min_fill_quantity"] == "0.01"
 
 
 def test_sign_quote_v2_preserves_exact_price_string():

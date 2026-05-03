@@ -131,6 +131,7 @@ class ContractClient:
                             'height': tx_response.get('height', ''),
                             'gasUsed': tx_response.get('gas_used', ''),
                             'gasWanted': tx_response.get('gas_wanted', ''),
+                            'events': tx_response.get('events', []),
                         }
                     elif response.status_code == 404:
                         # Tx not found yet, keep waiting

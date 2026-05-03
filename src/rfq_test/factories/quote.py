@@ -117,6 +117,7 @@ class QuoteFactory:
             "maker": maker_address,
             "signature": signature,
             "sign_mode": "v2",
+            "evm_chain_id": evm_chain_id,
             "maker_subaccount_nonce": maker_subaccount_nonce,
             "contract_address": contract_address,
         }

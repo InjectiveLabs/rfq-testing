@@ -220,6 +220,14 @@ async def main():
             "price": q["price"],
             "expiry": int(q["expiry"]),
             "signature": q["signature"],
+            "sign_mode": q.get("sign_mode") or "v2",
+            "evm_chain_id": int(q["evm_chain_id"]),
+            "maker_subaccount_nonce": int(q.get("maker_subaccount_nonce") or 0),
+            **(
+                {"min_fill_quantity": str(q["min_fill_quantity"])}
+                if q.get("min_fill_quantity") not in (None, "")
+                else {}
+            ),
         }
         for q in quotes
     ]

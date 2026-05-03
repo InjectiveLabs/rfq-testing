@@ -704,6 +704,10 @@ class TakerStreamClient(BaseStreamClient):
             "taker": quote.taker,
             "signature": quote.signature,
             "status": quote.status,
+            "sign_mode": quote.sign_mode,
+            "evm_chain_id": quote.evm_chain_id,
+            "maker_subaccount_nonce": quote.maker_subaccount_nonce,
+            "min_fill_quantity": quote.min_fill_quantity,
         }
 
 
