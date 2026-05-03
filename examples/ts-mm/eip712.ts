@@ -33,6 +33,15 @@ export interface SignQuoteV2Input {
   minFillQuantity?: string;    // sent as "0" in the digest when omitted
 }
 
+export interface SignMakerChallengeV2Input {
+  privateKey: string;          // 0x-prefixed or bare hex
+  evmChainId: number;
+  contractAddress: string;     // bech32
+  maker: string;               // bech32 inj1...
+  nonceHex: string;            // 32-byte hex, with or without 0x
+  expiresAt: number | bigint;
+}
+
 const DOMAIN_TYPE =
   "EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)";
 
@@ -41,6 +50,9 @@ const SIGN_QUOTE_TYPE =
   "string takerMargin,string takerQuantity,address maker,uint32 makerSubaccountNonce," +
   "string makerQuantity,string makerMargin,string price,uint8 expiryKind," +
   "uint64 expiryValue,string minFillQuantity,uint8 bindingKind)";
+
+const STREAM_AUTH_CHALLENGE_TYPE =
+  "StreamAuthChallenge(uint64 evmChainId,address maker,bytes32 nonce,uint64 expiresAt)";
 
 // --- bech32 → 20-byte EVM address (HRP = "inj") ------------------------------
 //
@@ -179,6 +191,36 @@ export function signQuoteV2(input: SignQuoteV2Input): string {
         uintWord(expiryValue, 8),
         stringWord(mfq),
         uintWord(input.taker ? BigInt(1) : BigInt(0), 1),
+      ),
+    ),
+  );
+
+  const ds = domainSeparator(input.evmChainId, input.contractAddress);
+  const digest = keccak256(concat(getBytes("0x1901"), ds, msgHash));
+
+  const pkHex = "0x" + input.privateKey.replace(/^0x/, "");
+  const key = new SigningKey(pkHex);
+  const sig = key.sign(digest);
+  const yParity = sig.yParity ?? (sig.v >= 27 ? sig.v - 27 : sig.v);
+  return hexlify(
+    concat(getBytes(sig.r), getBytes(sig.s), new Uint8Array([yParity & 1])),
+  );
+}
+
+export function signMakerChallengeV2(input: SignMakerChallengeV2Input): string {
+  const nonceHex = input.nonceHex.replace(/^0x/, "");
+  if (nonceHex.length !== 64) {
+    throw new Error(`expected 32-byte nonce hex, got ${nonceHex.length / 2} bytes`);
+  }
+
+  const msgHash = getBytes(
+    keccak256(
+      concat(
+        stringWord(STREAM_AUTH_CHALLENGE_TYPE),
+        uintWord(BigInt(input.evmChainId), 8),
+        addressWord(bech32ToEvm(input.maker)),
+        getBytes("0x" + nonceHex),
+        uintWord(BigInt(input.expiresAt), 8),
       ),
     ),
   );

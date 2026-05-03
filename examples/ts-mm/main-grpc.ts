@@ -23,7 +23,7 @@ import { fileURLToPath } from "url";
 import dotenv from "dotenv";
 import { PrivateKey } from "@injectivelabs/sdk-ts";
 
-import { signQuoteV2 } from "./eip712.js";
+import { signMakerChallengeV2, signQuoteV2 } from "./eip712.js";
 
 dotenv.config();
 
@@ -79,6 +79,32 @@ if (!CONTRACT_ADDRESS) throw new Error("CONTRACT_ADDRESS is not set");
 
 const PING_INTERVAL = 10_000; // 10 seconds
 
+function isLoopbackTarget(target: string): boolean {
+  let host = target;
+
+  if (target.includes("://")) {
+    try {
+      const parsed = new URL(target);
+      host = parsed.host || parsed.pathname;
+    } catch {
+      host = target;
+    }
+  }
+  if (host.startsWith("dns:///")) {
+    host = host.slice("dns:///".length);
+  }
+  if (host.startsWith("[")) {
+    const end = host.indexOf("]");
+    if (end !== -1) {
+      host = host.slice(1, end);
+    }
+  } else if (host.includes(":")) {
+    host = host.slice(0, host.lastIndexOf(":"));
+  }
+
+  return host === "localhost" || host === "127.0.0.1" || host === "::1";
+}
+
 function sendQuote(stream: grpc.ClientDuplexStream<any, any>, request: any, price: number) {
   const expiry = Date.now() + 20_000; // 20s validity
   const priceStr = price.toString();
@@ -129,9 +155,7 @@ function sendQuote(stream: grpc.ClientDuplexStream<any, any>, request: any, pric
 /* -------------------------------------------------------------------------- */
 
 function main() {
-  const useSsl =
-    !GRPC_ENDPOINT.startsWith("localhost") &&
-    !GRPC_ENDPOINT.startsWith("127.0.0.1");
+  const useSsl = !isLoopbackTarget(GRPC_ENDPOINT);
 
   const credentials = useSsl
     ? grpc.credentials.createSsl()
@@ -163,9 +187,35 @@ function main() {
   stream.on("data", (response: any) => {
     const msgType = response.message_type;
 
-    if (msgType === "pong") return;
+    if (msgType === "pong") {
+        console.log(`\n🏓 Received pong from server`);
+        return;
+    }
 
-    if (msgType === "request") {
+    if (msgType === "challenge") {
+      const cha = response.challenge;
+      console.log(`\n🔒 RFQ auth challenge nonce: ${cha.nonce}`);
+      console.log(`🔒 RFQ auth challenge expires at: ${cha.expires_at}`);
+      console.log(`🔒 RFQ auth challenge chain ID: ${cha.evm_chain_id}`);
+      console.log("🔐 Signing and sending auth response...");
+
+      const signature = signMakerChallengeV2({
+        privateKey: MM_PRIVATE_KEY,
+        evmChainId: Number(cha.evm_chain_id),
+        contractAddress: CONTRACT_ADDRESS,
+        maker: MAKER_ADDRESS,
+        nonceHex: cha.nonce,
+        expiresAt: BigInt(cha.expires_at),
+      });
+
+      stream.write({
+        message_type: "auth",
+        auth: {
+          evm_chain_id: Number(cha.evm_chain_id),
+          signature,
+        },
+      });
+    } else if (msgType === "request") {
       const req = response.request;
       console.log(`\n📩 RFQ request: RFQ#${req.rfq_id} market=${req.market_id}`);
       console.log(
