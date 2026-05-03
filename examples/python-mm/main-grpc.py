@@ -22,12 +22,12 @@ Prerequisites:
   pip install grpcio grpcio-tools eth-keys eth-utils python-dotenv bech32
 """
 import asyncio
-import json
 import os
 import sys
 import time
 from pathlib import Path
 from typing import Optional
+from urllib.parse import urlparse
 
 import dotenv
 from eth_utils import keccak
@@ -94,6 +94,9 @@ SIGN_QUOTE_TYPE = (
     b"string price,uint8 expiryKind,uint64 expiryValue,string minFillQuantity,"
     b"uint8 bindingKind)"
 )
+STREAM_AUTH_CHALLENGE_TYPE = (
+    b"StreamAuthChallenge(uint64 evmChainId,address maker,bytes32 nonce,uint64 expiresAt)"
+)
 
 
 def bech32_to_evm(addr: str) -> bytes:
@@ -113,11 +116,11 @@ def _s(s: str) -> bytes:        return keccak(text=s)
 def _addr(b20: bytes) -> bytes: return b"\x00" * 12 + b20
 
 
-def _domain_separator(contract_address: str) -> bytes:
+def _domain_separator(contract_address: str, evm_chain_id: int) -> bytes:
     return keccak(primitive=(
         keccak(primitive=EIP712_DOMAIN_TYPE)
         + _s("RFQ") + _s("1")
-        + _u(EVM_CHAIN_ID, 8)
+        + _u(evm_chain_id, 8)
         + _addr(bech32_to_evm(contract_address))
     ))
 
@@ -152,11 +155,56 @@ def sign_quote_v2(
         _s(mfq),
         _u(1, 1),                                          # bindingKind = 1 (taker-specific)
     ))
-    digest = keccak(primitive=b"\x19\x01" + _domain_separator(contract_address) + keccak(primitive=msg))
+    digest = keccak(primitive=b"\x19\x01" + _domain_separator(contract_address, EVM_CHAIN_ID) + keccak(primitive=msg))
     pk = keys.PrivateKey(bytes.fromhex(trim_0x(private_key)))
     sig = pk.sign_msg_hash(digest)
     v = sig.v - 27 if sig.v >= 27 else sig.v
     return "0x" + (sig.r.to_bytes(32, "big") + sig.s.to_bytes(32, "big") + bytes([v])).hex()
+
+
+def sign_maker_challenge_v2(
+    *,
+    private_key: str,
+    contract_address: str,
+    maker_inj: str,
+    evm_chain_id: int,
+    nonce_hex: str,
+    expires_at: int,
+) -> str:
+    nonce = bytes.fromhex(trim_0x(nonce_hex))
+    if len(nonce) != 32:
+        raise ValueError(f"expected 32-byte nonce, got {len(nonce)}")
+
+    msg = b"".join((
+        keccak(primitive=STREAM_AUTH_CHALLENGE_TYPE),
+        _u(int(evm_chain_id), 8),
+        _addr(bech32_to_evm(maker_inj)),
+        nonce,
+        _u(int(expires_at), 8),
+    ))
+    digest = keccak(
+        primitive=b"\x19\x01"
+        + _domain_separator(contract_address, int(evm_chain_id))
+        + keccak(primitive=msg)
+    )
+    pk = keys.PrivateKey(bytes.fromhex(trim_0x(private_key)))
+    sig = pk.sign_msg_hash(digest)
+    v = sig.v - 27 if sig.v >= 27 else sig.v
+    return "0x" + (sig.r.to_bytes(32, "big") + sig.s.to_bytes(32, "big") + bytes([v])).hex()
+
+
+def is_loopback_target(target: str) -> bool:
+    host = target
+    if "://" in target:
+        parsed = urlparse(target)
+        host = parsed.netloc or parsed.path
+    if host.startswith("dns:///"):
+        host = host[len("dns:///"):]
+    if host.startswith("[") and "]" in host:
+        host = host[1:host.index("]")]
+    elif ":" in host:
+        host = host.rsplit(":", 1)[0]
+    return host in {"localhost", "127.0.0.1", "::1"}
 
 
 async def _request_iter(send_queue: asyncio.Queue):
@@ -247,7 +295,7 @@ async def main():
     print(f"   Maker:    {maker_addr}")
 
     # Connect — use SSL for remote endpoints, insecure for localhost
-    if grpc_endpoint.startswith("localhost") or grpc_endpoint.startswith("127."):
+    if is_loopback_target(grpc_endpoint):
         channel = grpc.aio.insecure_channel(grpc_endpoint)
     else:
         channel = grpc.aio.secure_channel(
@@ -287,6 +335,31 @@ async def main():
 
             if msg_type == "pong":
                 continue
+
+            elif msg_type == "challenge":
+                cha = resp.challenge
+                print(f"\n🔒 RFQ auth challenge nonce: {cha.nonce}")
+                print(f"🔒 RFQ auth challenge expires at: {cha.expires_at}")
+                print(f"🔒 RFQ auth challenge chain ID: {cha.evm_chain_id}")
+                print("🔐 Signing and sending auth response...")
+
+                sig = sign_maker_challenge_v2(
+                    private_key=mm_pk,
+                    contract_address=contract_address,
+                    maker_inj=maker_addr,
+                    evm_chain_id=int(cha.evm_chain_id),
+                    nonce_hex=cha.nonce,
+                    expires_at=int(cha.expires_at),
+                )
+                await send_queue.put(
+                    MakerStreamStreamingRequest(
+                        message_type="auth",
+                        auth={
+                            "evm_chain_id": int(cha.evm_chain_id),
+                            "signature": sig,
+                        },
+                    )
+                )
 
             elif msg_type == "request":
                 req = resp.request
