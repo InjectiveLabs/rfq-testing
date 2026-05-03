@@ -188,7 +188,6 @@ function main() {
     const msgType = response.message_type;
 
     if (msgType === "pong") {
-        console.log(`\n🏓 Received pong from server`);
         return;
     }
 

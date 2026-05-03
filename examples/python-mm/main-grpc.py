@@ -334,7 +334,6 @@ async def main():
             msg_type = resp.message_type
 
             if msg_type == "pong":
-                print(f"\n🏓 Received pong from server")
                 continue
 
             elif msg_type == "challenge":

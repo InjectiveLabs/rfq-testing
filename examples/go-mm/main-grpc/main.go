@@ -435,7 +435,6 @@ func main() {
 		switch resp.MessageType {
 		case "pong":
 			// keep-alive ack
-			fmt.Printf("\n🏓 Received pong from server\n")
 
 		case "challenge":
 			cha := resp.Challenge
@@ -452,34 +451,34 @@ func main() {
 				NonceHex:        cha.GetNonce(),
 				ExpiresAt:       uint64(cha.GetExpiresAt()),
 			})
-				if err != nil {
-					log.Fatalf("sign auth challenge: %v", err)
-				}
+			if err != nil {
+				log.Fatalf("sign auth challenge: %v", err)
+			}
 
-				sendMu.Lock()
-				if err := stream.Send(&pb.MakerStreamStreamingRequest{
-					MessageType: "auth",
-					Auth: &pb.MakerAuth{
-						EvmChainId: cha.GetEvmChainId(),
-						Signature:  sig,
-					},
-				}); err != nil {
-					sendMu.Unlock()
-					log.Fatalf("send auth: %v", err)
-				}
+			sendMu.Lock()
+			if err := stream.Send(&pb.MakerStreamStreamingRequest{
+				MessageType: "auth",
+				Auth: &pb.MakerAuth{
+					EvmChainId: cha.GetEvmChainId(),
+					Signature:  sig,
+				},
+			}); err != nil {
 				sendMu.Unlock()
+				log.Fatalf("send auth: %v", err)
+			}
+			sendMu.Unlock()
 
-			case "request":
+		case "request":
 			req := resp.Request
 			fmt.Printf("\n📩 RFQ request: RFQ#%d market=%s\n", req.RfqId, req.MarketId)
 			fmt.Printf("   direction=%s margin=%s qty=%s\n", req.Direction, req.Margin, req.Quantity)
 
-				// Demo pricing ladder
-				for _, p := range []float64{1.3, 1.4, 1.5} {
-					if err := sendQuote(&sendMu, stream, req, p, makerAddr, mmPK, chainID, contractAddr, evmChainID); err != nil {
-						log.Printf("sendQuote error: %v", err)
-					}
+			// Demo pricing ladder
+			for _, p := range []float64{1.3, 1.4, 1.5} {
+				if err := sendQuote(&sendMu, stream, req, p, makerAddr, mmPK, chainID, contractAddr, evmChainID); err != nil {
+					log.Printf("sendQuote error: %v", err)
 				}
+			}
 
 		case "quote_ack":
 			ack := resp.QuoteAck
