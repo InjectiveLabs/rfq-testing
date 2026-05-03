@@ -161,6 +161,7 @@ The `SignQuote` typed-data is custom — **not** `eth_signTypedData_v4`. The ind
 
 ```
 SignQuote(
+  uint64  evmChainId,                // mirrors the chainId in the domain separator
   string  marketId,
   uint64  rfqId,
   address taker,
@@ -184,6 +185,7 @@ SignQuote(
 | `string` and decimal fields | `keccak256(utf8(s))` |
 | `address` | 20 bytes from `bech32_to_evm`, left-padded to 32 bytes |
 | `uint8` / `uint32` / `uint64` | big-endian, right-aligned in 32 bytes |
+| `evmChainId` | first message-hash field; must equal the domain separator's `chainId` and the wire `evm_chain_id` |
 | `bindingKind` | `1` for taker-specific quotes, `0` for blind quotes |
 | `minFillQuantity` | `"0"` when absent — never empty string |
 
@@ -500,9 +502,7 @@ async for resp in maker_stream:
         ...   # normal quoting loop
 ```
 
-The canonical end-to-end implementation lives in [`examples/python-mm/main-grpc.py`](examples/python-mm/main-grpc.py). Go and TypeScript ports are in [`examples/go-mm/main-grpc/main.go`](examples/go-mm/main-grpc/main.go) and [`examples/ts-mm/main-grpc.ts`](examples/ts-mm/main-grpc.ts).
-
-> **Library helper:** `rfq_test.crypto.eip712.sign_maker_challenge_v2` and an `_authenticate()` hook on `MakerStreamClient` are landing in a follow-up PR. Until then, vendor the standalone primitive above or copy the example file.
+The canonical end-to-end implementation lives in [`examples/python-mm/main-grpc.py`](examples/python-mm/main-grpc.py). Go and TypeScript ports are in [`examples/go-mm/main-grpc/main.go`](examples/go-mm/main-grpc/main.go) and [`examples/ts-mm/main-grpc.ts`](examples/ts-mm/main-grpc.ts). Use those scripts as the working reference for any maker connecting to the indexer.
 
 ### Failure modes
 
