@@ -735,7 +735,7 @@ The RFQ indexer monitors mark prices and triggers the order when the condition i
 | `min_total_fill_quantity` | string | Minimum quantity that must be filled for the order to settle |
 | `trigger_type` | string | `"mark_price_gte"`, `"mark_price_lte"`, or `"immediate"` |
 | `trigger_price` | string | Price threshold (use `"0"` for `immediate`) |
-| `unfilled_action` | string/null | Optional — wire-only, **not** bound by the v2 signature |
+| `unfilled_action` | object/null | Optional. **Bound by the v2 signature** as `(unfilledActionKind, unfilledActionPrice)`. `null` → `(0, "0")`; `{"market": {}}` → `(2, "0")`; `{"limit": {"price": "X"}}` → `(1, "X")`. Match the wire value to what you signed. |
 | `cid` | string/null | Optional client ID. Bound by the v2 signature. |
 | `allowed_relayer` | string/null | Optional. Bound by the v2 signature. |
 | `sign_mode` | string | **Required on the wire.** Use `"v2"`. Defaults to `"v1"` (deprecated) if omitted. |
@@ -743,7 +743,7 @@ The RFQ indexer monitors mark prices and triggers the order when the condition i
 
 ### Signing a Conditional Order (v2)
 
-`SignedTakerIntent` mirrors `SignQuote` — same domain separator, custom typed-data digest, secp256k1 sign of the digest. The wire `unfilled_action` field is **not** part of the digest (the indexer fixes `unfilledActionKind=0` and `unfilledActionPrice="0"` in the signed bytes), so post-trigger behaviour can change without invalidating the signature.
+`SignedTakerIntent` mirrors `SignQuote` — same domain separator, custom typed-data digest, secp256k1 sign of the digest. The wire `unfilled_action` field **is** bound by the v2 signature as the pair `(unfilledActionKind, unfilledActionPrice)`. Sign the same `unfilled_action` value you send on the wire, or the digest will not match.
 
 Use the library:
 
@@ -793,8 +793,8 @@ SignedTakerIntent(
   string  minTotalFillQuantity,
   uint8   triggerKind,               // 0=immediate, 1=mark_price_gte, 2=mark_price_lte
   string  triggerPrice,              // "0" for immediate
-  uint8   unfilledActionKind,        // hardcoded 0 (none)
-  string  unfilledActionPrice,       // hardcoded "0"
+  uint8   unfilledActionKind,        // 0=none (null), 1=limit, 2=market
+  string  unfilledActionPrice,       // limit price for kind=1, "0" otherwise
   string  cid,                       // "" if null (still hashed)
   address allowedRelayer             // zero-address if null
 )
@@ -936,7 +936,7 @@ if code != 0:
 | **Indexer** | `request_address` header for TakerStream; `maker_address` + optional subscription headers for MakerStream; `"long"`/`"short"` strings | Use numeric direction; omit required headers |
 | **Contract** | FPDecimal strings; worst_price within 10% of mark; prices quantized to `min_price_tick_size` before signing; check `tx_response.code` | Use 1e6 integers; ignore tick sizes; sign then quantize; assume tx success from hash only |
 | **Errors** | Check `code == 0`; read `rawLog` on failure; treat signing-mode validation errors as missing or unsupported `sign_mode` in your client | Assume success from tx hash |
-| **Conditional Orders** | Use `sign_conditional_order_v2`; `margin="0"` for reduce-only; track `epoch` / `lane_version`; pass `sign_mode="v2"` (default) on TakerStream + REST; `unfilled_action` is wire-only (not in digest) | Flat trigger fields; non-zero margin; reuse stale `epoch`/`lane_version` after cancel; assume `unfilled_action` is signed |
+| **Conditional Orders** | Use `sign_conditional_order_v2`; `margin="0"` for reduce-only; track `epoch` / `lane_version`; pass `sign_mode="v2"` + `evm_chain_id` (default) on TakerStream + REST; sign the same `unfilled_action` you send on the wire | Flat trigger fields; non-zero margin; reuse stale `epoch`/`lane_version` after cancel; mismatch `unfilled_action` between sign and send |
 
 ---
 
