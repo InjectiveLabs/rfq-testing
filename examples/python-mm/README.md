@@ -12,12 +12,12 @@ pip3 install injective-py eth-keys websockets eth-account python-dotenv
 cp ./env.example ./env
 
 # run setup script
-python3 mm-scripts-python/setup.py
+python3 python-mm/setup.py
 ```
 
 # MM main script
 
 ```
 # run main script (assume we have .env file from above step already)
-python3 mm-scripts-python/main.py
+python3 python-mm/main-grpc.py
 ```
