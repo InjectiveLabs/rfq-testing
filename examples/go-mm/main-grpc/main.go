@@ -27,14 +27,16 @@ import (
 	"fmt"
 	"log"
 	"math/big"
+	"net"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/joho/godotenv"
 
-	"github.com/cosmos/cosmos-sdk/types/bech32"
 	sdk "github.com/cosmos/cosmos-sdk/types"
+	"github.com/cosmos/cosmos-sdk/types/bech32"
 	"github.com/ethereum/go-ethereum/common/hexutil"
 	ethcrypto "github.com/ethereum/go-ethereum/crypto"
 
@@ -65,10 +67,35 @@ func trim0x(s string) string {
 	return s
 }
 
+func isLoopbackTarget(target string) bool {
+	host := target
+
+	if strings.Contains(target, "://") {
+		if parts := strings.SplitN(target, "://", 2); len(parts) == 2 {
+			host = parts[1]
+		}
+	}
+	if strings.HasPrefix(host, "dns:///") {
+		host = strings.TrimPrefix(host, "dns:///")
+	}
+	if h, _, err := net.SplitHostPort(host); err == nil {
+		host = h
+	}
+
+	host = strings.Trim(host, "[]")
+	if host == "localhost" {
+		return true
+	}
+
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
+}
+
 // --- EIP-712 v2 signing ----------------------------------------------------
 // Mirrors the indexer reference byte-for-byte.
 
 const eip712DomainType = "EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)"
+const streamAuthChallengeType = "StreamAuthChallenge(uint64 evmChainId,address maker,bytes32 nonce,uint64 expiresAt)"
 
 const signQuoteType = "SignQuote(string marketId,uint64 rfqId,address taker,uint8 takerDirection," +
 	"string takerMargin,string takerQuantity,address maker,uint32 makerSubaccountNonce," +
@@ -94,9 +121,9 @@ func bech32ToEvm(addr string) ([20]byte, error) {
 	return out, nil
 }
 
-func encU8(v uint8) []byte    { b := make([]byte, 32); b[31] = v; return b }
-func encU32(v uint32) []byte  { b := make([]byte, 32); binary.BigEndian.PutUint32(b[28:], v); return b }
-func encU64(v uint64) []byte  { b := make([]byte, 32); binary.BigEndian.PutUint64(b[24:], v); return b }
+func encU8(v uint8) []byte      { b := make([]byte, 32); b[31] = v; return b }
+func encU32(v uint32) []byte    { b := make([]byte, 32); binary.BigEndian.PutUint32(b[28:], v); return b }
+func encU64(v uint64) []byte    { b := make([]byte, 32); binary.BigEndian.PutUint64(b[24:], v); return b }
 func encAddr(a [20]byte) []byte { b := make([]byte, 32); copy(b[12:], a[:]); return b }
 func encString(s string) []byte { return ethcrypto.Keccak256([]byte(s)) }
 
@@ -180,6 +207,55 @@ func signQuoteV2(in signQuoteInput) (string, error) {
 	buf = append(buf, encU64(in.ExpiryValue)...)
 	buf = append(buf, encString(mfq)...)
 	buf = append(buf, encU8(1)...) // bindingKind = 1 (taker-specific)
+
+	msgHash := ethcrypto.Keccak256(buf)
+	domain, err := domainSeparator(in.EvmChainID, in.ContractAddress)
+	if err != nil {
+		return "", err
+	}
+	prefixed := append([]byte{0x19, 0x01}, append(domain, msgHash...)...)
+	digest := ethcrypto.Keccak256(prefixed)
+
+	privKey, err := ethcrypto.HexToECDSA(trim0x(in.PrivateKey))
+	if err != nil {
+		return "", err
+	}
+	sig, err := ethcrypto.Sign(digest, privKey)
+	if err != nil {
+		return "", err
+	}
+	return hexutil.Encode(sig), nil
+}
+
+type signMakerChallengeInput struct {
+	PrivateKey      string
+	EvmChainID      uint64
+	ContractAddress string // bech32
+	Maker           string // bech32
+	NonceHex        string // hex-encoded 32 bytes
+	ExpiresAt       uint64
+}
+
+func signMakerChallengeV2(in signMakerChallengeInput) (string, error) {
+	makerAddr, err := bech32ToEvm(in.Maker)
+	if err != nil {
+		return "", fmt.Errorf("maker: %w", err)
+	}
+
+	nonce, err := hex.DecodeString(trim0x(in.NonceHex))
+	if err != nil {
+		return "", fmt.Errorf("decode nonce: %w", err)
+	}
+	if len(nonce) != 32 {
+		return "", fmt.Errorf("expected 32-byte nonce, got %d bytes", len(nonce))
+	}
+
+	buf := make([]byte, 0, 32*5)
+	buf = append(buf, ethcrypto.Keccak256([]byte(streamAuthChallengeType))...)
+	buf = append(buf, encU64(in.EvmChainID)...)
+	buf = append(buf, encAddr(makerAddr)...)
+	buf = append(buf, nonce...)
+	buf = append(buf, encU64(in.ExpiresAt)...)
 
 	msgHash := ethcrypto.Keccak256(buf)
 	domain, err := domainSeparator(in.EvmChainID, in.ContractAddress)
@@ -292,7 +368,7 @@ func main() {
 
 	// Dial gRPC
 	var dialOpts []grpc.DialOption
-	if grpcEndpoint == "localhost" || grpcEndpoint[:4] == "127." {
+	if isLoopbackTarget(grpcEndpoint) {
 		dialOpts = append(dialOpts, grpc.WithTransportCredentials(insecure.NewCredentials()))
 	} else {
 		dialOpts = append(dialOpts, grpc.WithTransportCredentials(credentials.NewTLS(nil)))
@@ -348,6 +424,36 @@ func main() {
 		switch resp.MessageType {
 		case "pong":
 			// keep-alive ack
+			fmt.Printf("\n🏓 Received pong from server\n")
+
+		case "challenge":
+			cha := resp.Challenge
+			fmt.Printf("\n🔒 RFQ auth challenge nonce: %s\n", cha.GetNonce())
+			fmt.Printf("🔒 RFQ auth challenge expires at: %d\n", cha.GetExpiresAt())
+			fmt.Printf("🔒 RFQ auth challenge chain ID: %d\n", cha.GetEvmChainId())
+			fmt.Println("🔐 Signing and sending auth response...")
+
+			sig, err := signMakerChallengeV2(signMakerChallengeInput{
+				PrivateKey:      mmPK,
+				EvmChainID:      cha.GetEvmChainId(),
+				ContractAddress: contractAddr,
+				Maker:           makerAddr,
+				NonceHex:        cha.GetNonce(),
+				ExpiresAt:       uint64(cha.GetExpiresAt()),
+			})
+			if err != nil {
+				log.Fatalf("sign auth challenge: %v", err)
+			}
+
+			if err := stream.Send(&pb.MakerStreamStreamingRequest{
+				MessageType: "auth",
+				Auth: &pb.MakerAuth{
+					EvmChainId: cha.GetEvmChainId(),
+					Signature:  sig,
+				},
+			}); err != nil {
+				log.Fatalf("send auth: %v", err)
+			}
 
 		case "request":
 			req := resp.Request
