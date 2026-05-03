@@ -31,6 +31,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/joho/godotenv"
@@ -277,6 +278,7 @@ func signMakerChallengeV2(in signMakerChallengeInput) (string, error) {
 }
 
 func sendQuote(
+	sendMu *sync.Mutex,
 	stream pb.InjectiveRfqRPC_MakerStreamClient,
 	req *pb.RFQRequestType,
 	price float64,
@@ -329,6 +331,8 @@ func sendQuote(
 	}
 
 	fmt.Printf("\n📤 Sending quote (price=%s)\n", priceStr)
+	sendMu.Lock()
+	defer sendMu.Unlock()
 	return stream.Send(&pb.MakerStreamStreamingRequest{
 		MessageType: "quote",
 		Quote:       quote,
@@ -393,21 +397,28 @@ func main() {
 	if err != nil {
 		log.Fatalf("MakerStream: %v", err)
 	}
+	var sendMu sync.Mutex
 
 	// Send initial ping (first message carries data alongside HEADERS frame)
+	sendMu.Lock()
 	if err := stream.Send(&pb.MakerStreamStreamingRequest{MessageType: "ping"}); err != nil {
+		sendMu.Unlock()
 		log.Fatalf("initial ping: %v", err)
 	}
+	sendMu.Unlock()
 
 	// Background ping loop
 	go func() {
 		ticker := time.NewTicker(PING_INTERVAL)
 		defer ticker.Stop()
 		for range ticker.C {
+			sendMu.Lock()
 			if err := stream.Send(&pb.MakerStreamStreamingRequest{MessageType: "ping"}); err != nil {
+				sendMu.Unlock()
 				log.Printf("ping error: %v", err)
 				return
 			}
+			sendMu.Unlock()
 		}
 	}()
 
@@ -441,31 +452,34 @@ func main() {
 				NonceHex:        cha.GetNonce(),
 				ExpiresAt:       uint64(cha.GetExpiresAt()),
 			})
-			if err != nil {
-				log.Fatalf("sign auth challenge: %v", err)
-			}
+				if err != nil {
+					log.Fatalf("sign auth challenge: %v", err)
+				}
 
-			if err := stream.Send(&pb.MakerStreamStreamingRequest{
-				MessageType: "auth",
-				Auth: &pb.MakerAuth{
-					EvmChainId: cha.GetEvmChainId(),
-					Signature:  sig,
-				},
-			}); err != nil {
-				log.Fatalf("send auth: %v", err)
-			}
+				sendMu.Lock()
+				if err := stream.Send(&pb.MakerStreamStreamingRequest{
+					MessageType: "auth",
+					Auth: &pb.MakerAuth{
+						EvmChainId: cha.GetEvmChainId(),
+						Signature:  sig,
+					},
+				}); err != nil {
+					sendMu.Unlock()
+					log.Fatalf("send auth: %v", err)
+				}
+				sendMu.Unlock()
 
-		case "request":
+			case "request":
 			req := resp.Request
 			fmt.Printf("\n📩 RFQ request: RFQ#%d market=%s\n", req.RfqId, req.MarketId)
 			fmt.Printf("   direction=%s margin=%s qty=%s\n", req.Direction, req.Margin, req.Quantity)
 
-			// Demo pricing ladder
-			for _, p := range []float64{1.3, 1.4, 1.5} {
-				if err := sendQuote(stream, req, p, makerAddr, mmPK, chainID, contractAddr, evmChainID); err != nil {
-					log.Printf("sendQuote error: %v", err)
+				// Demo pricing ladder
+				for _, p := range []float64{1.3, 1.4, 1.5} {
+					if err := sendQuote(&sendMu, stream, req, p, makerAddr, mmPK, chainID, contractAddr, evmChainID); err != nil {
+						log.Printf("sendQuote error: %v", err)
+					}
 				}
-			}
 
 		case "quote_ack":
 			ack := resp.QuoteAck
