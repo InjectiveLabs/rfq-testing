@@ -7,7 +7,7 @@ import os
 import sys
 import time
 import uuid
-from decimal import Decimal
+from decimal import Decimal, ROUND_CEILING, ROUND_FLOOR
 from pathlib import Path
 
 # Add src to path
@@ -21,6 +21,7 @@ from rfq_test.crypto.wallet import Wallet
 from rfq_test.clients.websocket import MakerStreamClient, TakerStreamClient
 from rfq_test.crypto.eip712 import sign_quote_v2
 from rfq_test.models.types import Direction
+from rfq_test.utils.price import PriceFetcher, quantize_to_tick
 
 # Verbose logging
 logging.basicConfig(level=logging.DEBUG, format="%(asctime)s %(name)s %(levelname)s %(message)s")
@@ -46,6 +47,11 @@ async def main():
     market = config.default_market
     chain_id, contract_address = config.signing_context
     evm_chain_id, _ = config.signing_context_v2
+    price_fetcher = PriceFetcher(config)
+    mark_price = await price_fetcher.get_price(market)
+    price_tick = price_fetcher.get_price_tick(market)
+    quote_price = quantize_to_tick(mark_price * Decimal("1.01"), price_tick, rounding=ROUND_FLOOR)
+    worst_price = quantize_to_tick(mark_price * Decimal("1.05"), price_tick, rounding=ROUND_CEILING)
     print(f"📊 Market: {market.symbol}")
     print(f"⛓️  Chain: {chain_id} (EIP-712 EVM chainId={evm_chain_id})")
     print(f"📜 Contract: {contract_address}\n")
@@ -81,7 +87,7 @@ async def main():
         "direction": "long",
         "margin": "100",
         "quantity": "10",
-        "worst_price": "100",
+        "worst_price": worst_price,
         "expiry": {"ts": expiry_ms},
     }
     print(f"\n📤 Retail sending request (client_id={client_id})...")
@@ -101,16 +107,28 @@ async def main():
 
     # Step 4: MM waits for request
     print("\n⏳ MM waiting for request...")
-    try:
-        received = await mm_client.wait_for_request(timeout=10)
-        print(f"   ✅ MM received: RFQ#{received['rfq_id']}")
-        print(f"   Direction: {received['direction']}, Qty: {received['quantity']}, Margin: {received['margin']}")
-        print(f"   Taker: {received.get('taker') or received.get('request_address', 'unknown')}")
-    except Exception as e:
-        print(f"   ❌ MM did not receive request: {e}")
+    received = None
+    deadline = time.monotonic() + 20
+    while time.monotonic() < deadline:
+        try:
+            candidate = await mm_client.wait_for_request(timeout=2)
+        except Exception:
+            continue
+        if int(candidate["rfq_id"]) != rfq_id:
+            logger.info("Skipping unrelated RFQ#%s", candidate["rfq_id"])
+            continue
+        received = candidate
+        break
+
+    if received is None:
+        print(f"   ❌ MM did not receive RFQ#{rfq_id}")
         await mm_client.close()
         await retail_client.close()
         return
+
+    print(f"   ✅ MM received: RFQ#{received['rfq_id']}")
+    print(f"   Direction: {received['direction']}, Qty: {received['quantity']}, Margin: {received['margin']}")
+    print(f"   Taker: {received.get('taker') or received.get('request_address', 'unknown')}")
 
     # Step 5: MM builds and sends quote (with ACK wait)
     taker = received.get("taker") or received.get("request_address", "")
@@ -125,13 +143,13 @@ async def main():
         market_id=received["market_id"],
         rfq_id=int(received["rfq_id"]),
         taker=taker,
-        direction="long",
+        direction=received["direction"],
         taker_margin=received["margin"],
         taker_quantity=received["quantity"],
         maker=mm_wallet.inj_address,
         maker_margin=received["margin"],
         maker_quantity=received["quantity"],
-        price="1.5",
+        price=quote_price,
         expiry_ms=expiry,
         maker_subaccount_nonce=maker_subaccount_nonce,
         min_fill_quantity=min_fill_quantity,
@@ -142,20 +160,21 @@ async def main():
         "contract_address": contract_address,
         "rfq_id": received["rfq_id"],
         "market_id": received["market_id"],
-        "taker_direction": "long",
+        "taker_direction": received["direction"],
         "margin": received["margin"],
         "quantity": received["quantity"],
-        "price": "1.5",
+        "price": quote_price,
         "expiry": expiry,
         "maker": mm_wallet.inj_address,
         "taker": taker,
         "signature": signature,
         "sign_mode": "v2",
+        "evm_chain_id": evm_chain_id,
         "maker_subaccount_nonce": maker_subaccount_nonce,
         "min_fill_quantity": min_fill_quantity,
     }
 
-    print(f"\n📤 MM sending quote (price=1.5, expiry={expiry})...")
+    print(f"\n📤 MM sending quote (price={quote_price}, expiry={expiry})...")
     # Send quote AND wait for ACK/error
     response = await mm_client.send_quote(quote_data, wait_for_response=True, response_timeout=5.0)
     print(f"   📬 Indexer response: {response}")

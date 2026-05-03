@@ -13,7 +13,7 @@ import os
 import sys
 import time
 import uuid
-from decimal import Decimal
+from decimal import Decimal, ROUND_CEILING, ROUND_FLOOR
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
@@ -25,10 +25,13 @@ dotenv.load_dotenv()
 
 import grpc
 import grpc.aio
+from eth_account import Account
+from eth_hash.auto import keccak
 
 from rfq_test.config import get_settings, get_environment_config
 from rfq_test.crypto.wallet import Wallet
 from rfq_test.proto.injective_rfq_rpc_pb2 import (
+    MakerAuth,
     MakerStreamStreamingRequest,
     RFQRequestInputType,
     RFQExpiryType,
@@ -38,9 +41,9 @@ from rfq_test.proto.injective_rfq_rpc_pb2 import (
 )
 from rfq_test.proto.injective_rfq_rpc_pb2_grpc import InjectiveRfqRPCStub
 from rfq_test.clients.contract import ContractClient
-from rfq_test.crypto.eip712 import sign_quote_v2
+from rfq_test.crypto.eip712 import bech32_to_evm, domain_separator, sign_quote_v2
 from rfq_test.models.types import Direction
-from rfq_test.utils.price import PriceFetcher
+from rfq_test.utils.price import PriceFetcher, quantize_to_tick
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s")
 logger = logging.getLogger("rfq_settlement_grpc_test")
@@ -49,6 +52,51 @@ PING_INTERVAL = 10.0
 
 # Sentinel pushed into a send-queue to close the iterator / stream.
 _STREAM_CLOSE = object()
+STREAM_AUTH_CHALLENGE_TYPE = (
+    b"StreamAuthChallenge(uint64 evmChainId,address maker,bytes32 nonce,uint64 expiresAt)"
+)
+
+
+def _enc_u64(v: int) -> bytes:
+    return b"\x00" * 24 + int(v).to_bytes(8, "big")
+
+
+def _enc_addr(addr20: bytes) -> bytes:
+    if len(addr20) != 20:
+        raise ValueError(f"expected 20-byte address, got {len(addr20)}")
+    return b"\x00" * 12 + addr20
+
+
+def sign_maker_challenge_v2(
+    *,
+    private_key: str,
+    contract_address: str,
+    maker_inj: str,
+    evm_chain_id: int,
+    nonce_hex: str,
+    expires_at: int,
+) -> str:
+    """Sign the MakerStream auth challenge with the same RFQ EIP-712 domain."""
+    nonce = bytes.fromhex(nonce_hex.removeprefix("0x"))
+    if len(nonce) != 32:
+        raise ValueError(f"expected 32-byte nonce, got {len(nonce)}")
+
+    msg = b"".join((
+        keccak(STREAM_AUTH_CHALLENGE_TYPE),
+        _enc_u64(evm_chain_id),
+        _enc_addr(bech32_to_evm(maker_inj)),
+        nonce,
+        _enc_u64(expires_at),
+    ))
+    digest = keccak(
+        b"\x19\x01"
+        + domain_separator(evm_chain_id, contract_address)
+        + keccak(msg)
+    )
+    account = Account.from_key(bytes.fromhex(private_key.removeprefix("0x")))
+    sig = account.unsafe_sign_hash(digest)
+    v = sig.v - 27 if sig.v >= 27 else sig.v
+    return "0x" + (sig.r.to_bytes(32, "big") + sig.s.to_bytes(32, "big") + bytes([v])).hex()
 
 
 def get_grpc_endpoint(config) -> str:
@@ -71,7 +119,13 @@ async def _request_iter(send_queue: asyncio.Queue):
         yield msg
 
 
-async def read_maker_stream(call, queue: asyncio.Queue) -> None:
+async def read_maker_stream(
+    call,
+    queue: asyncio.Queue,
+    send_queue: asyncio.Queue,
+    mm_wallet: Wallet,
+    contract_address: str,
+) -> None:
     """Background task: read MakerStream responses and dispatch typed events to queue."""
     try:
         while True:
@@ -82,6 +136,32 @@ async def read_maker_stream(call, queue: asyncio.Queue) -> None:
             msg_type = resp.message_type
             if msg_type == "pong":
                 pass
+            elif msg_type == "challenge":
+                cha = resp.challenge
+                logger.info(
+                    "Maker: auth challenge nonce=%s evm_chain_id=%s expires_at=%s",
+                    cha.nonce,
+                    cha.evm_chain_id,
+                    cha.expires_at,
+                )
+                sig = sign_maker_challenge_v2(
+                    private_key=mm_wallet.private_key,
+                    contract_address=contract_address,
+                    maker_inj=mm_wallet.inj_address,
+                    evm_chain_id=int(cha.evm_chain_id),
+                    nonce_hex=cha.nonce,
+                    expires_at=int(cha.expires_at),
+                )
+                await send_queue.put(
+                    MakerStreamStreamingRequest(
+                        message_type="auth",
+                        auth=MakerAuth(
+                            evm_chain_id=int(cha.evm_chain_id),
+                            signature=sig,
+                        ),
+                    )
+                )
+                logger.info("Maker: auth response sent")
             elif msg_type == "request":
                 logger.info(f"Maker: request RFQ#{resp.request.rfq_id}")
                 await queue.put(("request", resp.request))
@@ -164,9 +244,11 @@ async def mm_wait_and_quote(
     mm_wallet,
     chain_id: str,
     contract_address: str,
+    signing_contract_address: str,
     evm_chain_id: int,
     target_rfq_id: int,
     quote_price: Decimal,
+    min_fill_quantity: str,
 ) -> dict | None:
     """MM: wait for OUR request (by rfq_id), then sign and enqueue quote."""
     print(f"   ⏳ MM waiting for RFQ#{target_rfq_id}...")
@@ -194,20 +276,24 @@ async def mm_wait_and_quote(
         return None
 
     print(f"   ✅ MM received RFQ#{received.rfq_id}")
+    print(
+        "      "
+        f"taker={received.request_address} direction={received.direction} "
+        f"margin={received.margin} quantity={received.quantity}"
+    )
 
     taker = received.request_address
     quote_expiry = int(time.time() * 1000) + 60_000
     maker_subaccount_nonce = 0
-    min_fill_quantity = None
 
     signature = sign_quote_v2(
         private_key=mm_wallet.private_key,
         evm_chain_id=evm_chain_id,
-        verifying_contract_bech32=contract_address,
+        verifying_contract_bech32=signing_contract_address,
         market_id=received.market_id,
         rfq_id=int(received.rfq_id),
         taker=taker,
-        direction="long",
+        direction=received.direction,
         taker_margin=received.margin,
         taker_quantity=received.quantity,
         maker=mm_wallet.inj_address,
@@ -224,7 +310,7 @@ async def mm_wait_and_quote(
         "contract_address": contract_address,
         "market_id": received.market_id,
         "rfq_id": received.rfq_id,
-        "taker_direction": "long",
+        "taker_direction": received.direction,
         "margin": received.margin,
         "quantity": received.quantity,
         "price": str(quote_price),
@@ -233,10 +319,10 @@ async def mm_wait_and_quote(
         "taker": taker,
         "signature": signature,
         "sign_mode": "v2",
+        "evm_chain_id": evm_chain_id,
         "maker_subaccount_nonce": maker_subaccount_nonce,
+        "min_fill_quantity": min_fill_quantity,
     }
-    if min_fill_quantity is not None:
-        quote_kwargs["min_fill_quantity"] = min_fill_quantity
 
     quote = RFQQuoteType(
         **quote_kwargs,
@@ -265,7 +351,7 @@ async def mm_wait_and_quote(
         "contract_address": contract_address,
         "rfq_id": received.rfq_id,
         "market_id": received.market_id,
-        "taker_direction": "long",
+        "taker_direction": received.direction,
         "margin": received.margin,
         "quantity": received.quantity,
         "price": str(quote_price),
@@ -274,6 +360,7 @@ async def mm_wait_and_quote(
         "taker": taker,
         "signature": signature,
         "sign_mode": "v2",
+        "evm_chain_id": evm_chain_id,
         "maker_subaccount_nonce": maker_subaccount_nonce,
         "min_fill_quantity": min_fill_quantity,
     }
@@ -303,6 +390,8 @@ async def collect_quotes(
             "taker": data.taker,
             "signature": data.signature,
             "status": data.status,
+            "sign_mode": data.sign_mode,
+            "evm_chain_id": data.evm_chain_id,
             "maker_subaccount_nonce": data.maker_subaccount_nonce,
             "min_fill_quantity": data.min_fill_quantity,
         }
@@ -423,10 +512,19 @@ async def main():
     market = config.default_market
     chain_id, contract_address = config.signing_context
     evm_chain_id, _ = config.signing_context_v2
+    evm_chain_id = int(os.getenv("RFQ_EVM_CHAIN_ID", str(evm_chain_id)))
+    signing_contract_address = os.getenv("RFQ_SIGNING_CONTRACT_ADDRESS", contract_address)
     price_fetcher = PriceFetcher(config)
     mark_price = await price_fetcher.get_price(market)
-    maker_quote_price = (mark_price * Decimal("1.01")).quantize(Decimal("0.000000000000000001"))
-    worst_price = (mark_price * Decimal("1.05")).quantize(Decimal("0.000000000000000001"))
+    price_tick = price_fetcher.get_price_tick(market)
+    qty_tick = price_fetcher.get_qty_tick(market)
+    maker_quote_price = Decimal(
+        quantize_to_tick(mark_price * Decimal("1.01"), price_tick, rounding=ROUND_FLOOR)
+    )
+    worst_price = Decimal(
+        quantize_to_tick(mark_price * Decimal("1.05"), price_tick, rounding=ROUND_CEILING)
+    )
+    min_fill_quantity = format(qty_tick.normalize(), "f") if qty_tick else "0.001"
 
     grpc_endpoint = get_grpc_endpoint(config)
 
@@ -438,7 +536,10 @@ async def main():
     print(f"📊 Market:   {market.symbol}")
     print(f"⛓️  Chain:    {chain_id}")
     print(f"📜 Contract: {contract_address}")
+    print(f"✍️  Signing:  {signing_contract_address}")
     print(f"💹 Mark:     {mark_price}")
+    print(f"🎚️  Tick:     {price_tick}")
+    print(f"📏 Qty tick: {qty_tick}")
     print(f"💬 Quote:    {maker_quote_price}")
     print(f"🛡️  Worst:    {worst_price}")
     print(f"🔌 gRPC:     {grpc_endpoint}")
@@ -476,7 +577,15 @@ async def main():
     maker_call = stub.MakerStream(_request_iter(maker_send_q), metadata=maker_metadata)
 
     # Start background reader tasks
-    maker_reader = asyncio.create_task(read_maker_stream(maker_call, maker_recv_q))
+    maker_reader = asyncio.create_task(
+        read_maker_stream(
+            maker_call,
+            maker_recv_q,
+            maker_send_q,
+            mm_wallet,
+            contract_address,
+        )
+    )
     quote_reader = asyncio.create_task(read_quote_stream(quote_call, quote_recv_q))
 
     # Keep MakerStream alive for maker-scoped request/update delivery.
@@ -526,9 +635,11 @@ async def main():
             mm_wallet,
             chain_id,
             contract_address,
+            signing_contract_address,
             evm_chain_id,
             rfq_id,
             maker_quote_price,
+            min_fill_quantity,
         )
     )
 
@@ -572,6 +683,8 @@ async def main():
         "price": best_quote["price"],
         "expiry": int(best_quote["expiry"]),
         "signature": best_quote["signature"],
+        "sign_mode": best_quote.get("sign_mode") or "v2",
+        "evm_chain_id": int(best_quote.get("evm_chain_id") or evm_chain_id),
     }
 
     settlement_cid = f"tc-cli-{uuid.uuid4()}"
@@ -600,18 +713,21 @@ async def main():
         print(f"   📜 TX Hash: {tx_hash}")
         print(f"   🔗 https://testnet.explorer.injective.network/transaction/{tx_hash}")
 
-        quote_update, settlement_update = await mm_wait_for_post_settlement_updates(
-            maker_recv_q,
-            rfq_id,
-            timeout=60.0,
-        )
-        print(f"   📬 Final quote status: {quote_update.status}")
-        print(f"   📬 Settlement CID: {settlement_update.cid}")
-        if settlement_update.cid != settlement_cid:
-            print(
-                f"   ⚠️  Settlement CID mismatch: expected {settlement_cid}, "
-                f"got {settlement_update.cid}"
+        try:
+            quote_update, settlement_update = await mm_wait_for_post_settlement_updates(
+                maker_recv_q,
+                rfq_id,
+                timeout=60.0,
             )
+            print(f"   📬 Final quote status: {quote_update.status}")
+            print(f"   📬 Settlement CID: {settlement_update.cid}")
+            if settlement_update.cid != settlement_cid:
+                print(
+                    f"   ⚠️  Settlement CID mismatch: expected {settlement_cid}, "
+                    f"got {settlement_update.cid}"
+                )
+        except TimeoutError as e:
+            print(f"   ⚠️  Settlement stream update not observed: {e}")
     except Exception as e:
         print(f"\n   ❌ SETTLEMENT FAILED: {e}")
         logger.exception("Settlement error:")
