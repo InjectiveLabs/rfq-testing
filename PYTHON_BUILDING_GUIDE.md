@@ -11,12 +11,13 @@ This guide helps you avoid common pitfalls and build correctly from day one. You
 2. [Architecture Overview](#architecture-overview)
 3. [Grant Creation (Critical)](#grant-creation-critical)
 4. [Quote Signing](#quote-signing)
-5. [Indexer Integration (WebSocket)](#indexer-integration-websocket)
-6. [Contract Expectations](#contract-expectations)
-7. [Conditional Orders (TP/SL)](#conditional-orders-tpsl)
-8. [Error Handling](#error-handling)
-9. [Production Tips](#production-tips)
-10. [Quick Reference](#quick-reference)
+5. [MakerStream Auth Handshake](#makerstream-auth-handshake)
+6. [Indexer Integration (WebSocket)](#indexer-integration-websocket)
+7. [Contract Expectations](#contract-expectations)
+8. [Conditional Orders (TP/SL)](#conditional-orders-tpsl)
+9. [Error Handling](#error-handling)
+10. [Production Tips](#production-tips)
+11. [Quick Reference](#quick-reference)
 
 ---
 
@@ -326,15 +327,16 @@ For block-height expiries pass `_u(1, 1)` (expiryKind=height) and the height as 
 
 The subaccount index used when your address was registered as a maker. Default `0`. Contact the platform operator if you registered with a non-default nonce.
 
-### Wire payload — `sign_mode` is required
+### Wire payload — `sign_mode` and `evm_chain_id` are required
 
-Whatever path you use to send the quote (REST `/v1/quote`, MakerStream WS, or gRPC), include both the signature and the sign-mode literal:
+Whatever path you use to send the quote (REST `/v1/quote`, MakerStream WS, or gRPC), include the signature, the sign-mode literal, and the EVM chain ID that you embedded in the EIP-712 domain separator:
 
 ```python
 quote = {
     # ...all the fields you signed above (chain_id/contract_address/market_id/etc)...
     "signature": signature,
     "sign_mode": "v2",
+    "evm_chain_id": 1439,                    # 1439 testnet, 1776 mainnet
 }
 ```
 
@@ -343,6 +345,172 @@ If `sign_mode` is missing or empty the indexer closes the stream with a signing-
 ConnectionClosedError(Close(code=1011, reason='invalid request:
   missing or unsupported sign_mode'))
 ```
+
+> **`evm_chain_id` (proto field 24) is required when `sign_mode="v2"`.** It tells the indexer which chain ID to use when reconstructing the domain separator and must match one of the indexer's configured chain IDs. The same field exists on `RFQQuoteType`, the conditional-order request, the `MakerAuth` envelope, and the indexer's `MakerChallenge` message — wherever a v2 signature appears, the chain ID rides alongside it. The field is ignored when `sign_mode="v1"`.
+
+> **`sign_mode` defaults.** When `sign_mode` is omitted on the wire, the indexer falls back to `"v1"` for backward compatibility. Set `sign_mode="v2"` explicitly on every payload — `"v1"` is deprecated and will be removed at launch.
+
+---
+
+## MakerStream Auth Handshake
+
+Before the indexer streams RFQ requests to a maker, the maker must prove control of the bech32 address it announced in connection metadata. The handshake is a one-shot challenge-response signed with EIP-712 v2 against the same domain separator as `SignQuote`.
+
+> **TL;DR:** Open the stream → server sends a `MakerChallenge` → sign `StreamAuthChallenge` typed-data → reply with `MakerAuth{evm_chain_id, signature}` → normal request/quote loop begins.
+
+### Flow
+
+```
+MM                                       Indexer
+ │                                          │
+ ├── connect (metadata: maker_address) ────▶│
+ │                                          │
+ │◀───── MakerChallenge {nonce,             │
+ │       evm_chain_id, expires_at} ─────────│   one-shot, ~30s validity
+ │                                          │
+ │  sign StreamAuthChallenge typed-data     │
+ │                                          │
+ ├── MakerStreamStreamingRequest{           │
+ │       message_type: "auth",              │
+ │       auth: MakerAuth{                   │
+ │         evm_chain_id, signature          │
+ │       }                                  │
+ │   } ────────────────────────────────────▶│
+ │                                          │
+ │◀──── request / quote_ack / settlement ──┤   stream loop continues
+```
+
+The challenge is single-use. If you reconnect, expect a fresh challenge with a new nonce.
+
+### `StreamAuthChallenge` typed-data
+
+The signed struct has 4 fields:
+
+```
+StreamAuthChallenge(
+  uint64  evmChainId,          // mirrors the value in the domain separator
+  address maker,               // 20-byte EVM form of your inj1… (bech32_to_evm)
+  bytes32 nonce,               // raw 32 bytes from MakerChallenge.nonce (hex-decoded)
+  uint64  expiresAt            // milliseconds since epoch, matches MakerChallenge
+)
+```
+
+| Field | Encoding |
+|---|---|
+| `evmChainId` | big-endian, right-aligned in 32 bytes (8 bytes wide) |
+| `maker` | 20 bytes from `bech32_to_evm(maker_inj)`, left-padded to 32 bytes |
+| `nonce` | the 32 raw bytes — passed through verbatim, **not** keccak-hashed |
+| `expiresAt` | big-endian, right-aligned in 32 bytes (8 bytes wide) |
+
+The final digest is `keccak256(0x19 || 0x01 || domainSeparator || msgHash)` with the same domain separator as `SignQuote` (`name="RFQ"`, `version="1"`, `chainId=evm_chain_id`, `verifyingContract=bech32_to_evm(contract_address)`). Sign the digest with secp256k1 raw, normalise `v` to `0/1`, and emit `0x`-prefixed `r ‖ s ‖ v`.
+
+### Wire messages
+
+The proto adds two messages and a new `message_type` value:
+
+```
+// indexer → maker, sent once after the stream opens
+message MakerChallenge {
+  string nonce         = 1;    // hex-encoded 32 bytes
+  uint64 evm_chain_id  = 2;
+  sint64 expires_at    = 3;    // unix milliseconds
+}
+
+// maker → indexer, sent once in response to MakerChallenge
+message MakerAuth {
+  uint64 evm_chain_id = 1;
+  string signature    = 2;     // 0x-prefixed r||s||v
+}
+```
+
+`MakerStreamStreamingRequest` gains `auth = 3` (`MakerAuth`) alongside the existing `quote = 2`. `MakerStreamResponse` gains `challenge = 7` (`MakerChallenge`) and a new `message_type` value `"challenge"`.
+
+### Standalone signing primitive
+
+```python
+from eth_utils import keccak
+from eth_keys import keys
+from bech32 import bech32_decode, convertbits
+
+STREAM_AUTH_CHALLENGE_TYPE = (
+    b"StreamAuthChallenge(uint64 evmChainId,address maker,bytes32 nonce,uint64 expiresAt)"
+)
+
+def _u(n: int, width: int) -> bytes:
+    return b"\x00" * (32 - width) + n.to_bytes(width, "big")
+def _addr(b20: bytes) -> bytes:
+    return b"\x00" * 12 + b20
+def bech32_to_evm(addr: str) -> bytes:
+    hrp, data = bech32_decode(addr)
+    return bytes(convertbits(data, 5, 8, False))
+
+def sign_maker_challenge_v2(
+    *,
+    private_key: str,
+    contract_address: str,                 # bech32, used in domain separator
+    maker_inj: str,
+    evm_chain_id: int,
+    nonce_hex: str,                        # from MakerChallenge.nonce
+    expires_at: int,                       # unix ms, from MakerChallenge.expires_at
+) -> str:
+    nonce = bytes.fromhex(nonce_hex.removeprefix("0x"))
+    if len(nonce) != 32:
+        raise ValueError(f"expected 32-byte nonce, got {len(nonce)}")
+
+    msg = b"".join((
+        keccak(primitive=STREAM_AUTH_CHALLENGE_TYPE),
+        _u(int(evm_chain_id), 8),
+        _addr(bech32_to_evm(maker_inj)),
+        nonce,                              # raw bytes — not keccak-hashed
+        _u(int(expires_at), 8),
+    ))
+    digest = keccak(
+        primitive=b"\x19\x01"
+        + domain_separator(evm_chain_id, contract_address)   # same as sign_quote_v2
+        + keccak(primitive=msg)
+    )
+    pk = keys.PrivateKey(bytes.fromhex(private_key.removeprefix("0x")))
+    sig = pk.sign_msg_hash(digest)
+    v = sig.v - 27 if sig.v >= 27 else sig.v
+    return "0x" + (sig.r.to_bytes(32, "big") + sig.s.to_bytes(32, "big") + bytes([v])).hex()
+```
+
+`domain_separator(...)` is the helper from the [Standalone v2 signing](#standalone-v2-signing-no-rfq-testing-dep) section above — same bytes, same chain ID. Reuse it.
+
+### End-to-end handler
+
+```python
+async for resp in maker_stream:
+    if resp.message_type == "challenge":
+        cha = resp.challenge
+        sig = sign_maker_challenge_v2(
+            private_key=mm_pk,
+            contract_address=contract_address,
+            maker_inj=maker_addr,
+            evm_chain_id=int(cha.evm_chain_id),
+            nonce_hex=cha.nonce,
+            expires_at=int(cha.expires_at),
+        )
+        await send_queue.put(MakerStreamStreamingRequest(
+            message_type="auth",
+            auth={"evm_chain_id": int(cha.evm_chain_id), "signature": sig},
+        ))
+    elif resp.message_type == "request":
+        ...   # normal quoting loop
+```
+
+The canonical end-to-end implementation lives in [`examples/python-mm/main-grpc.py`](examples/python-mm/main-grpc.py). Go and TypeScript ports are in [`examples/go-mm/main-grpc/main.go`](examples/go-mm/main-grpc/main.go) and [`examples/ts-mm/main-grpc.ts`](examples/ts-mm/main-grpc.ts).
+
+> **Library helper:** `rfq_test.crypto.eip712.sign_maker_challenge_v2` and an `_authenticate()` hook on `MakerStreamClient` are landing in a follow-up PR. Until then, vendor the standalone primitive above or copy the example file.
+
+### Failure modes
+
+| Symptom | Cause |
+|---|---|
+| Stream closes immediately after `auth` send | Signature mismatch — re-check `evm_chain_id`, `maker` derivation, and the domain separator |
+| `nonce` decode fails | The proto carries the nonce as a **hex string**; decode it before feeding into the digest |
+| `expired_challenge` | `expires_at` already past at the indexer — connect, sign, and reply within ~30s |
+| Stream silent after connect | No challenge arrived — verify you set `maker_address` in connection metadata |
 
 ---
 
@@ -372,7 +540,8 @@ Append `/TakerStream` or `/MakerStream` to the base URL.
 ### MakerStream (MM)
 
 - **URL:** `{base_url}/MakerStream`
-- **Connection metadata:** Send `maker_address` as a header when connecting if you want maker-scoped updates.
+- **Connection metadata:** Send `maker_address` as a header when connecting. The indexer issues an EIP-712 v2 challenge against this address — see [MakerStream Auth Handshake](#makerstream-auth-handshake) for the protocol.
+- **Auth handshake:** First inbound message after connect is `MakerChallenge`. Sign and reply with `MakerAuth` before any quoting. Skipping this step keeps the stream open but produces no `request` events.
 - **Optional subscriptions:** Set `subscribe_to_quotes_updates: true` and `subscribe_to_settlement_updates: true` as headers to receive those maker stream updates.
 - **Receive:** Requests arrive as stream messages
 - **Quote update scope:** `quote_update` events are sent for quotes whose `maker` matches `maker_address`.
@@ -401,7 +570,8 @@ The indexer expects a specific field order for `RFQQuoteType`. If you encode in 
 | 12 | signature | string | hex with `0x`, 65 bytes (r‖s‖v) |
 | 19 | maker_subaccount_nonce | uint32 | included in v2 digest as `makerSubaccountNonce` |
 | 20 | min_fill_quantity | string | optional — included in v2 digest as `"0"` if absent |
-| 23 | **sign_mode** | string | **Required.** `"v2"` for everything this client signs. |
+| 23 | **sign_mode** | string | **Required.** `"v2"` for everything this client signs. Defaults to `"v1"` when omitted (deprecated). |
+| 24 | **evm_chain_id** | uint64 | **Required when `sign_mode="v2"`.** Same value embedded in the EIP-712 domain separator (`1439` testnet, `1776` mainnet). |
 
 ---
 
@@ -568,7 +738,8 @@ The RFQ indexer monitors mark prices and triggers the order when the condition i
 | `unfilled_action` | string/null | Optional — wire-only, **not** bound by the v2 signature |
 | `cid` | string/null | Optional client ID. Bound by the v2 signature. |
 | `allowed_relayer` | string/null | Optional. Bound by the v2 signature. |
-| `sign_mode` | string | **Required on the wire.** Use `"v2"`. |
+| `sign_mode` | string | **Required on the wire.** Use `"v2"`. Defaults to `"v1"` (deprecated) if omitted. |
+| `evm_chain_id` | uint64 | **Required when `sign_mode="v2"`.** Same value as the domain separator's `chainId` (`1439` testnet, `1776` mainnet). On TakerStream the field name is `conditional_order_evm_chain_id` (proto field 6); on direct gRPC/REST creates it is `evm_chain_id` (proto field 4). |
 
 ### Signing a Conditional Order (v2)
 

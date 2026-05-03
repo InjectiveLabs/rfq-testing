@@ -122,7 +122,8 @@ The RFQ Indexer uses **gRPC-web over WebSocket** with protobuf framing:
 - **Subprotocol:** `grpc-ws`
 - **Framing:** `[1 byte flags][4 bytes length BE][protobuf payload]`
 - **Keep-alive:** Send `ping` message every 1 second
-- **Signing:** EIP-712 v2 (`SignQuote` / `SignedTakerIntent` typed-data digest → secp256k1 sign). Every quote and conditional order must carry `sign_mode: "v2"`; missing or empty signing modes are rejected by the indexer. Spec lives in [`src/rfq_test/crypto/eip712.py`](src/rfq_test/crypto/eip712.py); see [PYTHON_BUILDING_GUIDE.md — Quote Signing (v2)](PYTHON_BUILDING_GUIDE.md#quote-signing-v2) for the full recipe.
+- **Signing:** EIP-712 v2 (`SignQuote` / `SignedTakerIntent` typed-data digest → secp256k1 sign). Every quote and conditional order must carry `sign_mode: "v2"` and the matching `evm_chain_id` (`1439` testnet, `1776` mainnet) on the wire. Omitting `sign_mode` falls back to `"v1"` (deprecated, removed at launch); empty values are rejected. Spec lives in [`src/rfq_test/crypto/eip712.py`](src/rfq_test/crypto/eip712.py); see [PYTHON_BUILDING_GUIDE.md — Quote Signing (v2)](PYTHON_BUILDING_GUIDE.md#quote-signing-v2) for the full recipe.
+- **MakerStream auth:** The first server message after a maker connects is a `MakerChallenge`. Sign the `StreamAuthChallenge` typed-data with the same EIP-712 v2 domain separator and reply with `MakerAuth{evm_chain_id, signature}` before any quoting. Full protocol in [PYTHON_BUILDING_GUIDE.md — MakerStream Auth Handshake](PYTHON_BUILDING_GUIDE.md#makerstream-auth-handshake); reference implementations in [`examples/python-mm/main-grpc.py`](examples/python-mm/main-grpc.py), [`examples/go-mm/main-grpc/main.go`](examples/go-mm/main-grpc/main.go), and [`examples/ts-mm/main-grpc.ts`](examples/ts-mm/main-grpc.ts).
 
 ### Maker Update Subscriptions
 
