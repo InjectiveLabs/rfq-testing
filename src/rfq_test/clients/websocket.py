@@ -368,6 +368,7 @@ class TakerStreamClient(BaseStreamClient):
         wait_for_ack: bool = True,
         response_timeout: float = 5.0,
         sign_mode: str = "v2",
+        evm_chain_id: Optional[int] = None,
     ) -> Optional[dict]:
         """Send a conditional order (TP/SL) via the TakerStream.
 
@@ -386,6 +387,8 @@ class TakerStreamClient(BaseStreamClient):
                 client produces. The indexer rejects empty values
                 (`value of message.conditional_order_sign_mode must be one of
                 "v1", "v2"`). Default "v2".
+            evm_chain_id: EVM chain ID used by the v2 EIP-712 domain. Defaults
+                to `order_body["evm_chain_id"]` if present.
 
         Returns:
             Dict with rfq_id and status if wait_for_ack=True, else None.
@@ -420,6 +423,12 @@ class TakerStreamClient(BaseStreamClient):
             allowed_relayer=_str(order_body.get("allowed_relayer")),
         )
 
+        wire_evm_chain_id = evm_chain_id
+        if wire_evm_chain_id is None:
+            wire_evm_chain_id = order_body.get("evm_chain_id")
+        if sign_mode == "v2" and wire_evm_chain_id is None:
+            raise ValueError("evm_chain_id is required when sign_mode='v2'")
+
         sig = signature if signature.startswith("0x") else ("0x" + signature)
         # TakerStreamConditionalRequest is the hand-written proto that supports
         # the conditional_order field (not yet in the generated injective_rfq_rpc_pb2).
@@ -428,6 +437,7 @@ class TakerStreamClient(BaseStreamClient):
             conditional_order=co,
             conditional_order_signature=sig,
             conditional_order_sign_mode=sign_mode,
+            conditional_order_evm_chain_id=int(wire_evm_chain_id or 0),
         )
         logger.info(
             "Sending conditional_order: market=%s dir=%s trigger_type=%s trigger_price=%s",

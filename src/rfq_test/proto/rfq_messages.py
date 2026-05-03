@@ -10,7 +10,8 @@ Field layouts match the injective_rfq_rpc service proto:
 - RequestStreamAck: field 1 = rfq_id, field 2 = client_id, field 3 = status
 - QuoteStreamAck: field 1 = rfq_id, field 2 = status
 - ConditionalOrderInput: fields 1-20; sent inside TakerStreamRequest for TP/SL orders
-- TakerStreamRequest: field 3 = conditional_order, field 4 = conditional_order_signature
+- TakerStreamRequest: field 3 = conditional_order, field 4 = conditional_order_signature,
+  field 5 = conditional_order_sign_mode, field 6 = conditional_order_evm_chain_id
 - TakerStreamResponse: field 5 = conditional_order_ack
 """
 from __future__ import annotations
@@ -883,22 +884,23 @@ class TakerStreamRequest:
     """Message sent by taker in bidirectional stream.
 
     Fields: 1=message_type, 2=request, 3=conditional_order,
-    4=conditional_order_signature, 5=conditional_order_sign_mode.
+    4=conditional_order_signature, 5=conditional_order_sign_mode,
+    6=conditional_order_evm_chain_id.
 
     Set message_type to "ping" for keep-alive, "request" when sending an
     RFQ request (populate field 2), or "conditional_order" when submitting
-    a TP/SL order (populate fields 3 and 4 — and field 5, see below).
+    a TP/SL order (populate fields 3 and 4 — and fields 5/6, see below).
 
-    `conditional_order_sign_mode` is required for conditional_order
-    messages: the indexer rejects empty values with
-    `value of message.conditional_order_sign_mode must be one of "v1", "v2"`.
-    Use "v2" — it is the only mode this client signs.
+    `conditional_order_sign_mode` and `conditional_order_evm_chain_id` are
+    required for v2 conditional_order messages. Use sign mode "v2" — it is
+    the only mode this client signs.
     """
     message_type: str = ""  # "ping" | "request" | "conditional_order"
     request: Optional[CreateRFQRequestType] = None
     conditional_order: Optional[ConditionalOrderInput] = None
     conditional_order_signature: str = ""
     conditional_order_sign_mode: str = ""
+    conditional_order_evm_chain_id: int = 0
 
     def encode(self) -> bytes:
         result = b""
@@ -909,6 +911,7 @@ class TakerStreamRequest:
             result += _encode_message(3, self.conditional_order.encode())
         result += _encode_string(4, self.conditional_order_signature)
         result += _encode_string(5, self.conditional_order_sign_mode)
+        result += _encode_uint64(6, self.conditional_order_evm_chain_id)
         return result
 
 

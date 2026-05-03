@@ -12,6 +12,7 @@ from rfq_test.proto.rfq_messages import (
     RFQQuoteType,
     RFQSettlementLimitActionType,
     RFQSettlementType,
+    TakerStreamRequest,
     _encode_message,
     _encode_string,
     _encode_uint64,
@@ -234,6 +235,36 @@ def test_create_rfq_request_encodes_expiry_as_submessage():
     assert tag_wire >> 3 == 1
     timestamp, pos = _DecodeVarint32(expiry_value, pos)
     assert timestamp == 1234567890
+
+
+def test_taker_stream_request_encodes_conditional_order_evm_chain_id():
+    request = TakerStreamRequest(
+        message_type="conditional_order",
+        conditional_order_signature="0xsig",
+        conditional_order_sign_mode="v2",
+        conditional_order_evm_chain_id=1439,
+    )
+
+    encoded = request.encode()
+
+    pos = 0
+    evm_chain_id = None
+    while pos < len(encoded):
+        tag_wire, pos = _DecodeVarint32(encoded, pos)
+        field_num = tag_wire >> 3
+        wire_type = tag_wire & 0x7
+
+        if wire_type == 0:
+            value, pos = _DecodeVarint32(encoded, pos)
+            if field_num == 6:
+                evm_chain_id = value
+        elif wire_type == 2:
+            length, pos = _DecodeVarint32(encoded, pos)
+            pos += length
+        else:
+            raise AssertionError(f"Unexpected wire type {wire_type} for field {field_num}")
+
+    assert evm_chain_id == 1439
 
 
 @pytest.mark.asyncio

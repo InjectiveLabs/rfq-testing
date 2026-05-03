@@ -803,7 +803,7 @@ SignedTakerIntent(
 
 ### Submitting via TakerStream (WebSocket)
 
-Use `message_type = "conditional_order"` with the order in field 3, signature in field 4, **and `conditional_order_sign_mode = "v2"` in field 5** (required since 2026-04-29). The library's `send_conditional_order` defaults to `sign_mode="v2"`.
+Use `message_type = "conditional_order"` with the order in field 3, signature in field 4, **`conditional_order_sign_mode = "v2"` in field 5, and `conditional_order_evm_chain_id` in field 6**. The library's `send_conditional_order` defaults to `sign_mode="v2"` and requires an EVM chain ID for v2.
 
 ```python
 from rfq_test.clients.websocket import TakerStreamClient
@@ -817,6 +817,7 @@ order_body = {
     "min_total_fill_quantity": "1",
     "trigger_type": "mark_price_gte", "trigger_price": "120",
     "unfilled_action": None, "cid": None, "allowed_relayer": None,
+    "evm_chain_id": evm_chain_id,
 }
 
 async with TakerStreamClient(ws_base_url, request_address=taker_address) as client:
@@ -824,6 +825,7 @@ async with TakerStreamClient(ws_base_url, request_address=taker_address) as clie
         order_body=order_body,
         signature=signature,           # from sign_conditional_order_v2 above
         wait_for_ack=True,
+        evm_chain_id=evm_chain_id,
         # sign_mode="v2" is the default
     )
     print(f"ACK: rfq_id={result['rfq_id']} status={result['status']}")
