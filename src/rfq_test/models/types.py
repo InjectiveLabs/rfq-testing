@@ -21,7 +21,7 @@ class Request(BaseModel):
     """RFQ Request from retail user."""
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
     
-    rfq_id: str = Field(..., description="Unique request ID (timestamp-based nonce)")
+    rfq_id: str = Field(..., description="Indexer-assigned RFQ request ID")
     taker: str = Field(..., description="Retail user's Injective address")
     market_id: str = Field(..., description="Perpetual market ID")
     direction: Direction

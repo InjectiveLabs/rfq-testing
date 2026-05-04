@@ -1,4 +1,5 @@
 import asyncio
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -6,6 +7,7 @@ from google.protobuf.internal.decoder import _DecodeVarint32
 
 from rfq_test.actors.market_maker import MarketMaker
 from rfq_test.clients.websocket import MakerStreamClient, TakerStreamClient
+from rfq_test.factories.request import RequestFactory
 from rfq_test.proto.rfq_messages import (
     CreateRFQRequestType,
     RFQProcessedQuoteType,
@@ -235,6 +237,22 @@ def test_create_rfq_request_encodes_expiry_as_submessage():
     assert tag_wire >> 3 == 1
     timestamp, pos = _DecodeVarint32(expiry_value, pos)
     assert timestamp == 1234567890
+
+
+def test_indexer_request_factory_emits_client_id_not_rfq_id():
+    market = SimpleNamespace(
+        id="0xmarket",
+        typical_margin=10,
+        typical_quantity=1,
+        price=100,
+    )
+    request = RequestFactory(default_market=market).create_indexer_request(
+        taker_address="inj1taker",
+        client_id="11111111-1111-4111-8111-111111111111",
+    )
+
+    assert request["client_id"] == "11111111-1111-4111-8111-111111111111"
+    assert "rfq_id" not in request
 
 
 def test_taker_stream_request_encodes_conditional_order_evm_chain_id():

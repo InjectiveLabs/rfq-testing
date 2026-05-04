@@ -2,9 +2,8 @@
  * RFQ Taker — Multi-Quote Aggregation Example
  *
  * Retail forwards MM signatures to AcceptQuote — it doesn't sign anything
- * itself. The wire RFQQuoteType carries a `sign_mode` field; this script
- * always forwards "v2" (EIP-712) on each ContractQuote. The legacy "v1"
- * raw-JSON path is being retired.
+ * itself. The wire RFQQuoteType carries `sign_mode` and `evm_chain_id`;
+ * this script forwards the v2 fields on each ContractQuote.
  *
  * Demonstrates accepting multiple quotes from different makers in a single
  * AcceptQuote transaction. The contract's `quotes` field is a Vec<Quote>
@@ -16,7 +15,8 @@
  *   2. Filter by worst_price and sort cheapest-first (longs)
  *   3. Greedily select quotes until aggregate quantity >= requested
  *   4. Submit one AcceptQuote with the selected array
- *   5. Correct encoding: rfq_id as number, expiry wrapped, signature as base64
+ *   5. Correct encoding: use the ACK rfq_id as number, expiry wrapped,
+ *      signature as base64, and v2 fields forwarded
  *
  * Flow (same as main.ts, but accepts MULTIPLE quotes):
  *   0. Grants already in place
@@ -29,6 +29,7 @@
 
 import WebSocket from "ws";
 import dotenv from "dotenv";
+import { randomUUID } from "crypto";
 import {
   MsgBroadcasterWithPk,
   MsgExecuteContractCompat,
@@ -80,6 +81,9 @@ interface IndexerQuote {
   expiry: number | string; // Unix ms; cast defensively before use
   signature: string; // hex with 0x prefix, as delivered by the indexer
   sign_mode?: "v2"; // v2 only — v1 is deprecated and will be rejected at launch
+  evm_chain_id?: number | string;
+  maker_subaccount_nonce?: number | string;
+  min_fill_quantity?: string;
   status?: string;
 }
 
@@ -91,6 +95,9 @@ interface ContractQuote {
   expiry: { ts: number }; // wrapped enum
   signature: string; // base64
   sign_mode?: "v2"; // v2 only — v1 is deprecated and will be rejected at launch
+  evm_chain_id?: number;
+  maker_subaccount_nonce?: number;
+  min_fill_quantity?: string;
 }
 
 /* -------------------------------------------------------------------------- */
@@ -151,6 +158,12 @@ function toContractQuote(q: IndexerQuote): ContractQuote {
     expiry: { ts: Number(q.expiry) },
     signature: signatureB64,
     sign_mode: q.sign_mode ?? "v2",
+    evm_chain_id: q.evm_chain_id !== undefined ? Number(q.evm_chain_id) : undefined,
+    maker_subaccount_nonce:
+      q.maker_subaccount_nonce !== undefined
+        ? Number(q.maker_subaccount_nonce)
+        : 0,
+    ...(q.min_fill_quantity ? { min_fill_quantity: q.min_fill_quantity } : {}),
   };
 }
 
@@ -208,7 +221,8 @@ async function acceptQuotes(
 /* -------------------------------------------------------------------------- */
 
 async function main() {
-  const rfqId = Date.now();
+  const clientId = randomUUID();
+  let rfqId: number | null = null;
   const receivedQuotes: IndexerQuote[] = [];
 
   console.log(`👤 Taker: ${TAKER_ADDRESS}`);
@@ -216,7 +230,7 @@ async function main() {
     `🎯 Request: ${TOTAL_QUANTITY} contracts long, worst_price ${WORST_PRICE}`,
   );
   console.log(`🔗 WebSocket: ${WS_URL}`);
-  console.log(`🆔 rfq_id: ${rfqId}\n`);
+  console.log(`🆔 client_id: ${clientId}\n`);
 
   const ws = new WebSocket(WS_URL);
 
@@ -247,8 +261,15 @@ async function main() {
   ws.on("message", (raw: Buffer) => {
     try {
       const msg = JSON.parse(raw.toString());
+      const ack = msg?.result?.request_ack ?? msg?.result?.ack;
+      if (ack?.rfq_id && ack.client_id === clientId) {
+        rfqId = Number(ack.rfq_id);
+        console.log(`   📬 request ACK: rfq_id=${rfqId} status=${ack.status}`);
+        return;
+      }
+
       const quote: IndexerQuote | undefined = msg?.result?.quote;
-      if (quote && quote.rfq_id === rfqId) {
+      if (quote && rfqId !== null && Number(quote.rfq_id) === rfqId) {
         receivedQuotes.push(quote);
         console.log(
           `   📩 quote from ${quote.maker.slice(0, 20)}... qty=${quote.quantity} price=${quote.price}`,
@@ -259,21 +280,22 @@ async function main() {
     }
   });
 
-  // Send the RFQ request — direction is a lowercase string, not an integer
+  // Send the RFQ request — client_id is caller-supplied, rfq_id comes back in ACK.
+  // Direction is a lowercase string, not an integer.
   const request = {
     jsonrpc: "2.0",
     method: "create",
     id: Date.now(),
     params: {
       request: {
-        rfq_id: rfqId,
+        client_id: clientId,
         market_id: INJUSDC_MARKET_ID,
         direction: "long",
         margin: TOTAL_MARGIN,
         quantity: TOTAL_QUANTITY.toString(),
         worst_price: WORST_PRICE.toFixed(3),
         request_address: TAKER_ADDRESS,
-        expiry: rfqId + 5 * 60 * 1000,
+        expiry: Date.now() + 5 * 60 * 1000,
       },
     },
   };
@@ -287,6 +309,11 @@ async function main() {
   ws.close();
 
   console.log(`\n📦 Received ${receivedQuotes.length} quote(s)`);
+  if (rfqId === null) {
+    console.log("❌ No request ACK received — cannot settle without indexer-assigned rfq_id");
+    return;
+  }
+
   if (receivedQuotes.length === 0) {
     console.log("❌ No quotes — check maker whitelist, stream routing, balances");
     return;

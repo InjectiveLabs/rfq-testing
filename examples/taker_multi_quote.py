@@ -21,10 +21,11 @@ import logging
 import os
 import sys
 import time
+import uuid
 from decimal import Decimal
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).parent / "src"))
+sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 import dotenv
 dotenv.load_dotenv()
@@ -54,13 +55,13 @@ WORST_PRICE = Decimal("5.00")
 
 async def mm_listen_and_quote(
     spec: dict,
-    target_rfq_id: int,
+    target_client_id: str,
     chain_id: str,
     contract_address: str,
     evm_chain_id: int,
     config,
 ) -> dict | None:
-    """One maker: wait for the target RFQ, sign and return a quote."""
+    """One maker: wait for the target client_id, sign and return a quote."""
     pk = os.getenv(spec["env_key"])
     if not pk:
         logger.error(f"{spec['env_key']} not set; skipping this maker")
@@ -78,17 +79,18 @@ async def mm_listen_and_quote(
         while (time.monotonic() - start) < 30:
             try:
                 req = await mm_ws.wait_for_request(timeout=3)
-                if int(req["rfq_id"]) == target_rfq_id:
+                if req.get("client_id") == target_client_id:
                     received = req
                     break
             except Exception:
                 continue
 
         if not received:
-            logger.warning(f"Maker {mm_wallet.inj_address[:15]}... never saw RFQ#{target_rfq_id}")
+            logger.warning(f"Maker {mm_wallet.inj_address[:15]}... never saw client_id={target_client_id}")
             return None
 
         taker = received.get("taker") or received.get("request_address", "")
+        rfq_id = int(received["rfq_id"])
         quote_expiry = int(time.time() * 1000) + 60_000
 
         signature = sign_quote_v2(
@@ -96,7 +98,7 @@ async def mm_listen_and_quote(
             evm_chain_id=evm_chain_id,
             verifying_contract_bech32=contract_address,
             market_id=received["market_id"],
-            rfq_id=int(target_rfq_id),
+            rfq_id=rfq_id,
             taker=taker,
             direction="long",
             taker_margin=received["margin"],
@@ -111,7 +113,7 @@ async def mm_listen_and_quote(
         quote_data = {
             "chain_id": chain_id,
             "contract_address": contract_address,
-            "rfq_id": target_rfq_id,
+            "rfq_id": rfq_id,
             "market_id": received["market_id"],
             "taker_direction": "long",
             "margin": spec["quantity"],
@@ -122,6 +124,8 @@ async def mm_listen_and_quote(
             "taker": taker,
             "signature": signature,
             "sign_mode": "v2",
+            "evm_chain_id": evm_chain_id,
+            "maker_subaccount_nonce": 0,
         }
 
         await mm_ws.send_quote(quote_data)
@@ -155,8 +159,6 @@ async def main():
           f"{sum(Decimal(s['quantity']) for s in MAKER_SPECS)})")
     print()
 
-    rfq_id = int(time.time() * 1000)
-
     # Taker connects and submits request
     taker_ws = TakerStreamClient(
         endpoint=config.indexer.ws_endpoint,
@@ -166,29 +168,47 @@ async def main():
     await taker_ws.connect()
     print("✅ Taker connected to TakerStream")
 
-    # Makers start listening in parallel (they'll see the broadcast)
-    maker_tasks = [
-        asyncio.create_task(
-            mm_listen_and_quote(spec, rfq_id, chain_id, contract_address, evm_chain_id, config)
-        )
-        for spec in MAKER_SPECS
-    ]
-
-    # Give makers 2s to subscribe before we send the request
-    await asyncio.sleep(2)
-
+    client_id = str(uuid.uuid4())
+    expiry_ms = int(time.time() * 1000) + 300_000
     request_data = {
         "request_address": retail_wallet.inj_address,
-        "rfq_id": rfq_id,
+        "client_id": client_id,
         "market_id": market.id,
         "direction": "long",
         "margin": str(TOTAL_MARGIN),
         "quantity": str(TOTAL_QUANTITY),
         "worst_price": str(WORST_PRICE),
-        "expiry": rfq_id + 300_000,
+        "expiry": expiry_ms,
     }
-    await taker_ws.send_request(request_data)
-    print(f"📤 Taker sent RFQ#{rfq_id}")
+
+    # Makers start listening in parallel before the request is sent. They filter
+    # by client_id until the indexer broadcasts the request with the real rfq_id.
+    maker_tasks = [
+        asyncio.create_task(
+            mm_listen_and_quote(spec, client_id, chain_id, contract_address, evm_chain_id, config)
+        )
+        for spec in MAKER_SPECS
+    ]
+
+    # Give makers 2s to subscribe before we send the request.
+    await asyncio.sleep(2)
+
+    print(f"📤 Taker sending request (client_id={client_id})")
+    request_ack = await taker_ws.send_request(
+        request_data,
+        wait_for_response=True,
+        response_timeout=10.0,
+    )
+    if not request_ack or request_ack.get("type") != "ack" or not request_ack.get("rfq_id"):
+        print(f"❌ No request ACK received: {request_ack}")
+        for task in maker_tasks:
+            task.cancel()
+        await asyncio.gather(*maker_tasks, return_exceptions=True)
+        await taker_ws.close()
+        return
+
+    rfq_id = int(request_ack["rfq_id"])
+    print(f"📬 Request ACK: RFQ#{rfq_id} status={request_ack['status']}")
 
     # Collect quotes from the stream (not from the maker tasks — those are just
     # there to produce the quotes; the indexer is the source of truth for taker)

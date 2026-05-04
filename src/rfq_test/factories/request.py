@@ -1,6 +1,7 @@
 """Factory for generating RFQ request test data."""
 
 import time
+import uuid
 from decimal import Decimal
 from typing import Optional, Union
 
@@ -36,7 +37,7 @@ class RequestFactory:
             direction: Trade direction
             margin: Margin amount (derives from market if None)
             quantity: Quantity (derives from market if None)
-            rfq_id: Request ID (generates if None)
+            rfq_id: Local/off-chain request ID for legacy fixtures (generates if None)
             **overrides: Override any field
             
         Returns:
@@ -88,7 +89,7 @@ class RequestFactory:
             _dir = "short"
         elif isinstance(_dir, str):
             _dir = _dir.lower()
-        _client_id = client_id or str(int(time.time() * 1000))
+        _client_id = client_id or str(uuid.uuid4())
         if expiry_ms is None:
             expiry_ms = int(time.time() * 1000) + 300_000  # 5 min default
         request = {

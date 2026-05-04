@@ -3,15 +3,13 @@
  *
  * Retail doesn't sign quotes — it consumes the MM's signature and forwards
  * it to the on-chain `accept_quote`. The wire RFQQuoteType carries a
- * `sign_mode` field; this script always forwards "v2" (EIP-712). The
- * legacy "v1" raw-JSON path is being retired, so the Quote interface
- * below pins `sign_mode` to "v2" — TypeScript will reject any other value
- * at compile time.
+ * `sign_mode` and `evm_chain_id` fields; this script forwards the v2 fields
+ * byte-for-byte into `accept_quote`.
  *
  * Flow:
  * 0. Retail user has already granted permissions to RFQ contract
  * 1. Retail opens WebSocket & subscribes to quotes
- * 2. Retail creates RFQ request
+ * 2. Retail creates RFQ request with client_id and reads rfq_id from ACK
  * 3. Makers respond with quotes
  * 4. Retail picks best quote
  * 5. Retail accepts quote on-chain
@@ -19,6 +17,7 @@
 
 import WebSocket from "ws";
 import dotenv from "dotenv";
+import { randomUUID } from "crypto";
 import {
   ChainGrpcExchangeApi,
   MsgBroadcasterWithPk,
@@ -91,9 +90,9 @@ console.log("max acceptable price:", maxAcceptablePrice.toFixed(4));
 /* -------------------------------------------------------------------------- */
 
 interface RfqRequest {
-  rfq_id: number;
+  client_id: string;
   market_id: string;
-  direction: number;
+  direction: "long" | "short";
   margin: string;
   quantity: string;
   worst_price: string;
@@ -115,6 +114,9 @@ interface Quote {
   signature: string; // Binary is typically base64 or hex encoded string
   nonce: number | undefined;
   sign_mode?: "v2"; // v2 only — v1 is deprecated and will be rejected at launch
+  evm_chain_id?: number;
+  maker_subaccount_nonce?: number;
+  min_fill_quantity?: string;
 }
 
 interface Settlement {
@@ -151,6 +153,11 @@ interface WebSocketMessage {
   id: number;
   params?: any;
   result?: {
+    request_ack?: { rfq_id: number; client_id: string; status: string };
+    ack?: { rfq_id: number; client_id: string; status: string };
+    rfq_id?: number;
+    client_id?: string;
+    status?: string;
     quote?: Quote;
     settlement?: Settlement;
     stream_operation?: string;
@@ -164,14 +171,36 @@ interface WebSocketMessage {
 let retailWs: WebSocket | null = null;
 let settlementWs: WebSocket | null = null;
 let receivedQuotes: Quote[] = [];
+let requestClientId: string | null = null;
 let requestRfqId: number | null = null;
+
+function requestAckFrom(msg: WebSocketMessage) {
+  const result = msg.result;
+  if (!result) return undefined;
+  return result.request_ack ?? result.ack ?? (
+    result.rfq_id && result.client_id
+      ? { rfq_id: result.rfq_id, client_id: result.client_id, status: result.status ?? "" }
+      : undefined
+  );
+}
+
+function normalizeExpiry(expiry: any): Expiry {
+  if (typeof expiry === "number" || typeof expiry === "string") {
+    return { ts: Number(expiry), h: undefined };
+  }
+  return {
+    ts: expiry?.ts ?? expiry?.timestamp,
+    h: expiry?.h ?? expiry?.height,
+  };
+}
 
 /* -------------------------------------------------------------------------- */
 /*                              RFQ OPERATIONS                                */
 /* -------------------------------------------------------------------------- */
 
 /**
- * Step 2: Create RFQ request (off-chain)
+ * Step 2: Create RFQ request (off-chain). client_id is caller-supplied;
+ * rfq_id is backend-assigned and returned in the request ACK.
  */
 
 async function createRfqRequest(
@@ -235,15 +264,15 @@ function chooseBestQuotes(
 /**
  * Step 5: Accept quote on-chain
  */
-async function acceptQuote(worst_price: number, request: RfqRequest, quotes: Quote[]) {
+async function acceptQuote(worst_price: number, rfqId: number, request: RfqRequest, quotes: Quote[]) {
   console.log("\n📌 Accepting quotes:", quotes);
 
   const action = {
     accept_quote: {
-      rfq_id: request.rfq_id,
+      rfq_id: rfqId,
       market_id: request.market_id,
       margin: request.margin,
-      direction: request.direction === 0 ? "long" : "short",
+      direction: request.direction,
       quantity: request.quantity,
       worst_price: worst_price.toFixed(3),
       quotes: quotes,
@@ -310,11 +339,13 @@ retailWs.on("open", () => {
   console.log("📡 Subscribed to quote stream");
 
   const expiry = Date.now() + 5 * 60 * 1000; // 5 minutes
+  const clientId = randomUUID();
+  requestClientId = clientId;
 
   const request: RfqRequest = {
-    rfq_id: Date.now(),
+    client_id: clientId,
     market_id: INJUSDT_MARKET_ID,
-    direction: 0, // long
+    direction: "long",
     margin: margin,
     quantity: quantity,
     request_address: TAKER_ADDRESS,
@@ -336,7 +367,12 @@ retailWs.on("open", () => {
       process.exit(0);
     }
 
-    await acceptQuote(maxAcceptablePrice, request, best);
+    if (requestRfqId == null) {
+      console.log("❌ No request ACK received; cannot settle without indexer-assigned rfq_id");
+      process.exit(0);
+    }
+
+    await acceptQuote(maxAcceptablePrice, requestRfqId, request, best);
 
     receivedQuotes = [];
     requestRfqId = null;
@@ -345,9 +381,17 @@ retailWs.on("open", () => {
 
 retailWs.on("message", (data) => {
   const msg: WebSocketMessage = JSON.parse(data.toString());
+  const ack = requestAckFrom(msg);
+  if (ack && ack.client_id === requestClientId) {
+    requestRfqId = Number(ack.rfq_id);
+    console.log(`📬 Request ACK: RFQ#${requestRfqId} status=${ack.status}`);
+    return;
+  }
+
   if (!msg.result?.quote) return;
 
   const quote = msg.result.quote as any;
+  if (requestRfqId == null || Number(quote.rfq_id) !== requestRfqId) return;
   console.log(
     `📩 Quote received | price=${quote.price} maker=${quote.maker}`
   );
@@ -357,14 +401,19 @@ retailWs.on("message", (data) => {
     margin: quote.margin,
     price: quote.price,
     quantity: quote.quantity,
-    expiry: quote.expiry,
+    expiry: normalizeExpiry(quote.expiry),
     signature: Buffer.from(quote.signature.replace('0x', ''), 'hex').toString('base64'),
     nonce: undefined,
     sign_mode: quote.sign_mode ?? "v2",   // forward MM's sign_mode; default to v2
+    evm_chain_id: quote.evm_chain_id !== undefined ? Number(quote.evm_chain_id) : undefined,
+    maker_subaccount_nonce: quote.maker_subaccount_nonce !== undefined ? Number(quote.maker_subaccount_nonce) : 0,
   }
 
   if (quote.nonce) {
     q.nonce = quote.nonce
+  }
+  if (quote.min_fill_quantity) {
+    q.min_fill_quantity = quote.min_fill_quantity
   }
 
   receivedQuotes.push(q);

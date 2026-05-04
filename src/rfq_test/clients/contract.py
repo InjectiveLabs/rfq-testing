@@ -530,7 +530,7 @@ class ContractClient:
         Args:
             private_key: Taker's private key
             quotes: List of quotes to accept (empty for orderbook settlement)
-            rfq_id: Request ID (nonce)
+            rfq_id: Indexer-assigned RFQ request ID from the TakerStream ACK
             market_id: Market ID
             direction: Trade direction
             margin: Margin amount

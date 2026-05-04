@@ -535,7 +535,7 @@ Append `/TakerStream` or `/MakerStream` to the base URL.
 
 - **URL:** `{base_url}/TakerStream`
 - **Connection metadata:** Send `request_address` (taker's Injective address) as a header when connecting. The indexer uses this to associate requests with the correct taker.
-- **Request:** Send `CreateRFQRequestType` with `rfq_id`, `market_id`, `direction`, `margin`, `quantity`, `worst_price`, `expiry`.
+- **Request:** Send `CreateRFQRequestType` with `client_id`, `market_id`, `direction`, `margin`, `quantity`, `worst_price`, `request_address`, and `expiry`. `client_id` is the taker-supplied correlation ID; the indexer returns the real `rfq_id` in the request ACK.
 - **Direction:** Use `"long"` or `"short"` (string). Do not use `0`/`1` or numeric values.
 
 ### MakerStream (MM)
@@ -724,7 +724,7 @@ The RFQ indexer monitors mark prices and triggers the order when the condition i
 | `contract_address` | string | RFQ contract address (wire-only — bound via the v2 domain separator) |
 | `taker` | string | Taker's Injective address |
 | `epoch` | uint64 | Incremented by `CancelAllIntents`. Start at `1`; increment after each global cancel. |
-| `rfq_id` | uint64 | Unique order ID — use current Unix timestamp in ms |
+| `rfq_id` | uint64 | Conditional-order intent ID. For live RFQ requests this is backend-assigned in the request ACK; for pre-signed intents use a fresh nonce such as current Unix timestamp in ms. |
 | `market_id` | string | Derivative market ID (0x hex) |
 | `subaccount_nonce` | uint32 | Subaccount index (default `0`) |
 | `lane_version` | uint64 | Incremented by `CancelIntentLane`. Start at `1`; increment after each per-market cancel. |

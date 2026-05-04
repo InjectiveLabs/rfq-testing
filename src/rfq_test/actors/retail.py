@@ -1,7 +1,7 @@
 """Retail user actor."""
 
 import logging
-import time
+import uuid
 from decimal import Decimal
 from typing import Optional
 
@@ -62,9 +62,9 @@ class RetailUser:
     async def __aexit__(self, exc_type, exc_val, exc_tb) -> None:
         await self.disconnect()
     
-    def generate_rfq_id(self) -> int:
-        """Generate unique RFQ ID (timestamp-based nonce)."""
-        return int(time.time() * 1000)
+    def generate_client_id(self) -> str:
+        """Generate a taker-side request correlation ID."""
+        return str(uuid.uuid4())
     
     async def create_request(
         self,
@@ -72,7 +72,7 @@ class RetailUser:
         direction: Direction,
         margin: Optional[Decimal] = None,
         quantity: Optional[Decimal] = None,
-        rfq_id: Optional[int] = None,
+        client_id: Optional[str] = None,
         worst_price: Optional[Decimal] = None,
     ) -> dict:
         """Create an RFQ request.
@@ -82,11 +82,11 @@ class RetailUser:
             direction: Trade direction
             margin: Margin amount (uses market default if None)
             quantity: Quantity (uses market default if None)
-            rfq_id: Optional custom RFQ ID
+            client_id: Optional client-side correlation ID. The indexer assigns rfq_id.
             worst_price: Worst acceptable price
             
         Returns:
-            Request data that was sent
+            Request data plus the indexer-assigned rfq_id from the ACK
         """
         if not self._ws_client:
             raise RuntimeError("Not connected")
@@ -99,13 +99,19 @@ class RetailUser:
             margin=margin,
             quantity=quantity,
             worst_price=worst_price,
-            rfq_id=rfq_id or self.generate_rfq_id(),
+            client_id=client_id or self.generate_client_id(),
         )
 
-        logger.info(f"Creating request: RFQ#{request_data['rfq_id']}")
-        await self._ws_client.send_request(request_data)
-        
-        return request_data
+        logger.info(f"Creating request: client_id={request_data['client_id']}")
+        ack = await self._ws_client.send_request(request_data, wait_for_response=True)
+        if not ack or ack.get("type") != "ack" or not ack.get("rfq_id"):
+            raise RuntimeError(f"RFQ request did not receive ACK: {ack}")
+
+        return {
+            **request_data,
+            "rfq_id": str(ack["rfq_id"]),
+            "status": ack.get("status"),
+        }
     
     async def wait_for_quotes(
         self,

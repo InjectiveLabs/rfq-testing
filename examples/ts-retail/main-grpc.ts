@@ -2,9 +2,8 @@
  * RFQ – Retail User Main Flow (gRPC)
  *
  * Retail doesn't sign quotes — it forwards the MM's signature to AcceptQuote.
- * The wire RFQQuoteType carries a `sign_mode` field; this script always
- * forwards "v2" (EIP-712). The legacy "v1" raw-JSON path is being retired,
- * so the Quote interface below pins `sign_mode` to "v2".
+ * The wire RFQQuoteType carries `sign_mode` and `evm_chain_id`; this script
+ * forwards the v2 fields into AcceptQuote.
  *
  * Uses native gRPC APIs instead of WebSocket.
  *
@@ -115,8 +114,10 @@ interface CollectedQuote {
   quantity: string;
   expiry: { ts?: number; h?: number };
   signature: string;
-  nonce?: number;
   sign_mode?: "v2"; // v2 only — v1 is deprecated and will be rejected at launch
+  evm_chain_id?: number;
+  maker_subaccount_nonce?: number;
+  min_fill_quantity?: string;
 }
 
 /* -------------------------------------------------------------------------- */
@@ -168,12 +169,15 @@ async function acceptQuote(
     margin: q.margin,
     quantity: q.quantity,
     price: q.price,
-    expiry: q.expiry.ts || q.expiry.h || 0,
+      expiry: q.expiry.ts ? { ts: q.expiry.ts } : { h: q.expiry.h || 0 },
     signature: Buffer.from(
       q.signature.replace("0x", ""),
       "hex"
     ).toString("base64"),
     sign_mode: q.sign_mode ?? "v2",
+    evm_chain_id: q.evm_chain_id,
+    maker_subaccount_nonce: q.maker_subaccount_nonce ?? 0,
+    ...(q.min_fill_quantity ? { min_fill_quantity: q.min_fill_quantity } : {}),
   }));
 
   const action = {
@@ -259,9 +263,11 @@ async function main() {
       expiry: { ts: expiryTs, h: expiryH },
       signature: q.signature,
       sign_mode: q.sign_mode,
-      nonce: q.maker_subaccount_nonce
+      evm_chain_id: q.evm_chain_id ? Number(q.evm_chain_id) : undefined,
+      maker_subaccount_nonce: q.maker_subaccount_nonce
         ? Number(q.maker_subaccount_nonce)
-        : undefined,
+        : 0,
+      min_fill_quantity: q.min_fill_quantity || undefined,
     });
   });
 
