@@ -25,6 +25,7 @@ from rfq_test.proto.injective_rfq_rpc_pb2 import (
     CreateRFQRequestType,
     MakerStreamStreamingRequest,
     MakerStreamResponse,
+    MakerAuth,
     RFQExpiryType,
     RFQProcessedQuoteType,
     RFQQuoteType,
@@ -38,6 +39,7 @@ from rfq_test.proto.rfq_messages import (
     ConditionalOrderInput,
     TakerStreamRequest as TakerStreamConditionalRequest,
 )
+from rfq_test.crypto.eip712 import sign_maker_challenge_v2
 
 logger = logging.getLogger(__name__)
 
@@ -728,6 +730,9 @@ class MakerStreamClient(BaseStreamClient):
         maker_address: Optional[str] = None,
         subscribe_to_quotes_updates: bool = False,
         subscribe_to_settlement_updates: bool = False,
+        auth_private_key: Optional[str] = None,
+        auth_evm_chain_id: Optional[int] = None,
+        auth_contract_address: Optional[str] = None,
         timeout: float = 10.0,
     ):
         """Initialize Maker stream client.
@@ -737,12 +742,18 @@ class MakerStreamClient(BaseStreamClient):
             maker_address: Maker's Injective address sent as stream metadata
             subscribe_to_quotes_updates: Request quote update events for this maker
             subscribe_to_settlement_updates: Request settlement update events for this maker
+            auth_private_key: Maker private key used to answer MakerChallenge
+            auth_evm_chain_id: EVM chain ID from the RFQ signing domain
+            auth_contract_address: RFQ contract bech32 address for the signing domain
             timeout: Default timeout for operations
         """
         super().__init__(base_url, timeout=timeout)
         self._maker_address = maker_address
         self._subscribe_to_quotes_updates = subscribe_to_quotes_updates
         self._subscribe_to_settlement_updates = subscribe_to_settlement_updates
+        self._auth_private_key = auth_private_key
+        self._auth_evm_chain_id = auth_evm_chain_id
+        self._auth_contract_address = auth_contract_address
     
     @property
     def stream_path(self) -> str:
@@ -792,6 +803,33 @@ class MakerStreamClient(BaseStreamClient):
                     ack = response.quote_ack
                     logger.debug(f"Quote ACK: RFQ#{ack.rfq_id} status={ack.status}")
                     await self._message_queue.put(("quote_ack", ack))
+
+                elif msg_type == "challenge":
+                    challenge = response.challenge
+                    if (
+                        not self._auth_private_key
+                        or not self._maker_address
+                        or not self._auth_contract_address
+                    ):
+                        logger.warning("Received MakerStream auth challenge but auth signer is not configured")
+                        await self._message_queue.put(("challenge", challenge))
+                        continue
+
+                    evm_chain_id = int(challenge.evm_chain_id or self._auth_evm_chain_id or 0)
+                    signature = sign_maker_challenge_v2(
+                        private_key=self._auth_private_key,
+                        evm_chain_id=evm_chain_id,
+                        verifying_contract_bech32=self._auth_contract_address,
+                        maker=self._maker_address,
+                        nonce_hex=challenge.nonce,
+                        expires_at=int(challenge.expires_at),
+                    )
+                    auth_msg = MakerStreamStreamingRequest(
+                        message_type="auth",
+                        auth=MakerAuth(evm_chain_id=evm_chain_id, signature=signature),
+                    )
+                    logger.info("Answering MakerStream auth challenge")
+                    await self._send_raw(encode_grpc_message(auth_msg))
 
                 elif msg_type == "quote_update":
                     quote = response.processed_quote

@@ -1,17 +1,14 @@
-"""Full E2E test: Retail sends request → MM quotes → Retail accepts on-chain.
-
-v4: Drains stale requests, matches rfq_id explicitly.
-"""
+"""Full E2E test: Retail sends request → MM quotes → Retail accepts on-chain."""
 import asyncio
 import logging
 import os
 import sys
 import time
 import uuid
-from decimal import Decimal
+from decimal import Decimal, ROUND_CEILING, ROUND_FLOOR
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).parent / "src"))
+sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 import dotenv
 dotenv.load_dotenv()
@@ -22,7 +19,7 @@ from rfq_test.clients.websocket import MakerStreamClient, TakerStreamClient
 from rfq_test.clients.contract import ContractClient
 from rfq_test.crypto.eip712 import sign_quote_v2
 from rfq_test.models.types import Direction
-from rfq_test.utils.price import PriceFetcher
+from rfq_test.utils.price import PriceFetcher, quantize_to_tick
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s")
 logger = logging.getLogger("rfq_settlement_test")
@@ -113,6 +110,7 @@ async def mm_wait_and_quote(
         "taker": taker,
         "signature": signature,
         "sign_mode": "v2",
+        "evm_chain_id": evm_chain_id,
         "maker_subaccount_nonce": maker_subaccount_nonce,
         "min_fill_quantity": min_fill_quantity,
     }
@@ -201,10 +199,18 @@ async def main():
     market = config.default_market
     chain_id, contract_address = config.signing_context
     evm_chain_id, _ = config.signing_context_v2
+    evm_chain_id = int(os.getenv("RFQ_EVM_CHAIN_ID", str(evm_chain_id)))
+    signing_contract_address = os.getenv("RFQ_SIGNING_CONTRACT_ADDRESS", contract_address)
     price_fetcher = PriceFetcher(config)
     mark_price = await price_fetcher.get_price(market)
-    maker_quote_price = (mark_price * Decimal("1.01")).quantize(Decimal("0.000000000000000001"))
-    worst_price = (mark_price * Decimal("1.05")).quantize(Decimal("0.000000000000000001"))
+    price_tick = price_fetcher.get_price_tick(market)
+    qty_tick = price_fetcher.get_qty_tick(market)
+    maker_quote_price = Decimal(
+        quantize_to_tick(mark_price * Decimal("1.01"), price_tick, rounding=ROUND_FLOOR)
+    )
+    worst_price = Decimal(
+        quantize_to_tick(mark_price * Decimal("1.05"), price_tick, rounding=ROUND_CEILING)
+    )
 
     print("=" * 60)
     print("RFQ FULL SETTLEMENT TEST (TESTNET)")
@@ -214,7 +220,10 @@ async def main():
     print(f"📊 Market:   {market.symbol}")
     print(f"⛓️  Chain:    {chain_id}")
     print(f"📜 Contract: {contract_address}")
+    print(f"✍️  Signing:  {signing_contract_address}")
     print(f"💹 Mark:     {mark_price}")
+    print(f"🎚️  Tick:     {price_tick}")
+    print(f"📏 Qty tick: {qty_tick}")
     print(f"💬 Quote:    {maker_quote_price}")
     print(f"🛡️  Worst:    {worst_price}")
     print("=" * 60)
@@ -228,6 +237,9 @@ async def main():
         maker_address=mm_wallet.inj_address,
         subscribe_to_quotes_updates=True,
         subscribe_to_settlement_updates=True,
+        auth_private_key=mm_pk,
+        auth_evm_chain_id=evm_chain_id,
+        auth_contract_address=signing_contract_address,
         timeout=10.0,
     )
     await mm_client.connect()

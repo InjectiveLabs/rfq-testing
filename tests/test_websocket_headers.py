@@ -6,8 +6,18 @@ import pytest
 from google.protobuf.internal.decoder import _DecodeVarint32
 
 from rfq_test.actors.market_maker import MarketMaker
-from rfq_test.clients.websocket import MakerStreamClient, TakerStreamClient
+from rfq_test.clients.websocket import (
+    MakerStreamClient,
+    TakerStreamClient,
+    decode_grpc_message,
+    encode_grpc_message,
+)
 from rfq_test.factories.request import RequestFactory
+from rfq_test.proto.injective_rfq_rpc_pb2 import (
+    MakerChallenge,
+    MakerStreamResponse,
+    MakerStreamStreamingRequest,
+)
 from rfq_test.proto.rfq_messages import (
     CreateRFQRequestType,
     RFQProcessedQuoteType,
@@ -87,6 +97,45 @@ async def test_maker_stream_sends_supported_metadata_headers():
         "subscribe_to_quotes_updates": "true",
         "subscribe_to_settlement_updates": "true",
     }
+
+
+@pytest.mark.asyncio
+async def test_maker_stream_answers_auth_challenge():
+    challenge = MakerChallenge(
+        nonce="0x" + "22" * 32,
+        evm_chain_id=1439,
+        expires_at=1772851186901,
+    )
+    response = MakerStreamResponse(message_type="challenge", challenge=challenge)
+    fake_ws = SimpleNamespace(
+        recv=AsyncMock(side_effect=[encode_grpc_message(response), asyncio.CancelledError()]),
+        send=AsyncMock(),
+    )
+    client = MakerStreamClient(
+        "wss://example.test/injective_rfq_rpc.InjectiveRfqRPC",
+        maker_address="inj1maker",
+        auth_private_key="0x" + "11" * 32,
+        auth_evm_chain_id=999,
+        auth_contract_address="inj1contract",
+    )
+    client._connected = True
+    client._ws = fake_ws
+
+    with patch("rfq_test.clients.websocket.sign_maker_challenge_v2", return_value="0xsig") as sign:
+        await client._receive_loop()
+
+    sign.assert_called_once_with(
+        private_key="0x" + "11" * 32,
+        evm_chain_id=1439,
+        verifying_contract_bech32="inj1contract",
+        maker="inj1maker",
+        nonce_hex="0x" + "22" * 32,
+        expires_at=1772851186901,
+    )
+    sent = decode_grpc_message(fake_ws.send.await_args.args[0], MakerStreamStreamingRequest)
+    assert sent.message_type == "auth"
+    assert sent.auth.evm_chain_id == 1439
+    assert sent.auth.signature == "0xsig"
 
 
 @pytest.mark.asyncio

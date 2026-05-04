@@ -63,6 +63,10 @@ SIGNED_TAKER_INTENT_TYPE = (
     b")"
 )
 
+STREAM_AUTH_CHALLENGE_TYPE = (
+    b"StreamAuthChallenge(uint64 evmChainId,address maker,bytes32 nonce,uint64 expiresAt)"
+)
+
 # --- Constants ---------------------------------------------------------
 
 DIRECTION_LONG = 0
@@ -305,6 +309,31 @@ def signed_taker_intent_digest(
     return _final_digest(domain_sep, keccak(msg))
 
 
+def stream_auth_challenge_digest(
+    *,
+    evm_chain_id: int,
+    verifying_contract_bech32: str,
+    maker_bech32: str,
+    nonce_hex: str,
+    expires_at: int,
+) -> bytes:
+    """Compute the 32-byte EIP-712 v2 digest for MakerStream auth."""
+    nonce = bytes.fromhex(nonce_hex.removeprefix("0x"))
+    if len(nonce) != 32:
+        raise ValueError(f"expected 32-byte nonce, got {len(nonce)}")
+
+    type_hash = keccak(STREAM_AUTH_CHALLENGE_TYPE)
+    msg = b"".join((
+        type_hash,
+        _enc_u64(evm_chain_id),
+        _enc_addr(bech32_to_evm(maker_bech32)),
+        nonce,
+        _enc_u64(expires_at),
+    ))
+    domain_sep = domain_separator(evm_chain_id, verifying_contract_bech32)
+    return _final_digest(domain_sep, keccak(msg))
+
+
 # --- Signing -----------------------------------------------------------
 
 def _normalize_pk(private_key: str) -> bytes:
@@ -429,5 +458,25 @@ def sign_conditional_order_v2(
         trigger_price=None if trigger_price is None else str(trigger_price),
         cid=cid,
         allowed_relayer=allowed_relayer,
+    )
+    return _sign_digest(digest, private_key)
+
+
+def sign_maker_challenge_v2(
+    *,
+    private_key: str,
+    evm_chain_id: int,
+    verifying_contract_bech32: str,
+    maker: str,
+    nonce_hex: str,
+    expires_at: int,
+) -> str:
+    """Sign a MakerStream auth challenge and return `0x` + r||s||v hex."""
+    digest = stream_auth_challenge_digest(
+        evm_chain_id=evm_chain_id,
+        verifying_contract_bech32=verifying_contract_bech32,
+        maker_bech32=maker,
+        nonce_hex=nonce_hex,
+        expires_at=expires_at,
     )
     return _sign_digest(digest, private_key)
