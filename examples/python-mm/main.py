@@ -20,8 +20,10 @@
 import asyncio
 import json
 import os
+import sys
 import time
 from dataclasses import dataclass, asdict
+from pathlib import Path
 from typing import Optional
 
 import dotenv
@@ -32,6 +34,17 @@ from eth_keys import keys
 
 dotenv.load_dotenv()
 
+sys.path.insert(0, str(Path(__file__).parent.parent.parent / "src"))
+sys.path.insert(0, str(Path(__file__).parent.parent.parent / "src" / "rfq_test" / "proto"))
+
+from rfq_test.proto.injective_rfq_rpc_pb2 import (
+    MakerAuth,
+    MakerStreamResponse,
+    MakerStreamStreamingRequest,
+    RFQExpiryType,
+    RFQQuoteType,
+)
+
 WS_URL = "ws://localhost:4464/ws"
 COMETBFT_WS_URL = "ws://localhost:26657/websocket"
 
@@ -41,10 +54,12 @@ def must_env(key: str) -> str:
         raise RuntimeError(f"{key} not set")
     return v
 
+WS_URL = must_env("WS_ENDPOINT")
 CONTRACT_ADDRESS = must_env("CONTRACT_ADDRESS")
 CHAIN_ID         = must_env("CHAIN_ID")
 EVM_CHAIN_ID     = int(os.getenv("EVM_CHAIN_ID", "1439"))   # 1439 testnet, 1776 mainnet
 INJUSDT_MARKET_ID = "0x7cc8b10d7deb61e744ef83bdec2bbcf4a056867e89b062c6a453020ca82bd4e4"
+PING_INTERVAL = 10.0
 
 # --- EIP-712 v2 signing primitives (mirrors the indexer reference) -------------
 
@@ -57,6 +72,9 @@ SIGN_QUOTE_TYPE = (
     b"uint32 makerSubaccountNonce,string makerQuantity,string makerMargin,"
     b"string price,uint8 expiryKind,uint64 expiryValue,string minFillQuantity,"
     b"uint8 bindingKind)"
+)
+STREAM_AUTH_CHALLENGE_TYPE = (
+    b"StreamAuthChallenge(uint64 evmChainId,address maker,bytes32 nonce,uint64 expiresAt)"
 )
 
 def trim_0x(s: str) -> str:
@@ -78,13 +96,32 @@ def _u(n: int, width: int) -> bytes:
 def _s(s: str) -> bytes:    return keccak(text=s)
 def _addr(b20: bytes) -> bytes: return b"\x00" * 12 + b20
 
-def domain_separator() -> bytes:
+def domain_separator(evm_chain_id: int) -> bytes:
     return keccak(primitive=(
         keccak(primitive=EIP712_DOMAIN_TYPE)
         + _s("RFQ") + _s("1")
-        + _u(EVM_CHAIN_ID, 8)
+        + _u(evm_chain_id, 8)
         + _addr(bech32_to_evm(CONTRACT_ADDRESS))
     ))
+
+def encode_grpc_message(message) -> bytes:
+    payload = message.SerializeToString()
+    return b"\x00" + len(payload).to_bytes(4, "big") + payload
+
+def decode_grpc_message(data: bytes, message_type):
+    if len(data) < 5:
+        raise ValueError(f"short grpc-ws frame: {len(data)} bytes")
+    if data[0] == 0x80:
+        return None
+    if data[0] != 0:
+        raise ValueError(f"unsupported compression flag: {data[0]}")
+    msg_len = int.from_bytes(data[1:5], "big")
+    payload = data[5:5 + msg_len]
+    if len(payload) != msg_len:
+        raise ValueError(f"truncated grpc-ws frame: expected {msg_len}, got {len(payload)}")
+    msg = message_type()
+    msg.ParseFromString(payload)
+    return msg
 
 def sign_quote_v2(
     *,
@@ -121,7 +158,33 @@ def sign_quote_v2(
         _s(mfq),
         _u(1, 1),                                          # bindingKind = 1 (taker-specific)
     ))
-    digest = keccak(primitive=b"\x19\x01" + domain_separator() + keccak(primitive=msg))
+    digest = keccak(primitive=b"\x19\x01" + domain_separator(EVM_CHAIN_ID) + keccak(primitive=msg))
+
+    pk = keys.PrivateKey(bytes.fromhex(trim_0x(private_key)))
+    sig = pk.sign_msg_hash(digest)
+    v = sig.v - 27 if sig.v >= 27 else sig.v
+    return "0x" + (sig.r.to_bytes(32, "big") + sig.s.to_bytes(32, "big") + bytes([v])).hex()
+
+def sign_maker_challenge_v2(
+    *,
+    private_key: str,
+    maker_inj: str,
+    evm_chain_id: int,
+    nonce_hex: str,
+    expires_at: int,
+) -> str:
+    nonce = bytes.fromhex(trim_0x(nonce_hex))
+    if len(nonce) != 32:
+        raise ValueError(f"expected 32-byte nonce, got {len(nonce)}")
+
+    msg = b"".join((
+        keccak(primitive=STREAM_AUTH_CHALLENGE_TYPE),
+        _u(int(evm_chain_id), 8),
+        _addr(bech32_to_evm(maker_inj)),
+        nonce,
+        _u(int(expires_at), 8),
+    ))
+    digest = keccak(primitive=b"\x19\x01" + domain_separator(int(evm_chain_id)) + keccak(primitive=msg))
 
     pk = keys.PrivateKey(bytes.fromhex(trim_0x(private_key)))
     sig = pk.sign_msg_hash(digest)
@@ -183,7 +246,7 @@ class Quote:
 
 async def send_quote(
     ws,
-    req: Optional[RfqRequest],
+    req,
     price: float,
     maker_addr: str,
     mm_pk: str,
@@ -203,9 +266,9 @@ async def send_quote(
         )
 
     quote = Quote(
-        rfq_id=req.rfq_id,
+        rfq_id=int(req.rfq_id),
         market_id=req.market_id,
-        direction=(1 if req.direction == 0 else 0),
+        direction=(1 if req.direction == "long" else 0),
         margin=req.margin,
         quantity=str(int(float(req.quantity) / 2)),
         price=f"{price:.1f}",
@@ -227,7 +290,7 @@ async def send_quote(
         market_id=quote.market_id,
         rfq_id=quote.rfq_id,
         taker_inj=quote.taker,
-        direction="long" if req.direction == 0 else "short",
+        direction=req.direction,
         taker_margin=req.margin,
         taker_quantity=req.quantity,
         maker_inj=quote.maker,
@@ -239,69 +302,114 @@ async def send_quote(
         expiry_height=expiry.h if expiry.h > 0 else None,
         min_fill_quantity=quote.min_fill_quantity,
     )
-    quote.signature = sig
-    quote_dict = asdict(quote)
-    quote_dict["sign_mode"] = "v2"           # required by indexer
-    msg = {
-        "jsonrpc": "2.0",
-        "method": "quote",
-        "id": int(time.time() * 1000),
-        "params": {
-            "quote": quote_dict,
-        },
-    }
+    quote_pb = RFQQuoteType(
+        chain_id=CHAIN_ID,
+        contract_address=CONTRACT_ADDRESS,
+        market_id=quote.market_id,
+        rfq_id=quote.rfq_id,
+        taker_direction=req.direction,
+        margin=quote.margin,
+        quantity=quote.quantity,
+        price=quote.price,
+        maker=quote.maker or "",
+        taker=quote.taker or "",
+        signature=sig,
+        sign_mode="v2",
+        maker_subaccount_nonce=maker_subaccount_nonce,
+        evm_chain_id=EVM_CHAIN_ID,
+    )
+    if expiry.ts > 0:
+        quote_pb.expiry.CopyFrom(RFQExpiryType(timestamp=expiry.ts))
+    else:
+        quote_pb.expiry.CopyFrom(RFQExpiryType(height=expiry.h))
 
-    print('msg:', msg)
-    print("\n📤 Sending quote")
-    print(json.dumps(msg, indent=2))
-    await ws.send(json.dumps(msg))
+    print(f"\n📤 Sending quote (price={quote.price})")
+    await ws.send(
+        encode_grpc_message(
+            MakerStreamStreamingRequest(message_type="quote", quote=quote_pb)
+        )
+    )
+
+async def ping_loop(ws):
+    while True:
+        try:
+            await asyncio.sleep(PING_INTERVAL)
+            await ws.send(
+                encode_grpc_message(MakerStreamStreamingRequest(message_type="ping"))
+            )
+        except asyncio.CancelledError:
+            break
 
 async def quote_loop(mm_addr, mm_pk):
-    RFQ_STREAM_ID = 1
-    async with websockets.connect(WS_URL) as ws:
-        print("🔌 MM WebSocket connected")
+    async with websockets.connect(
+        WS_URL,
+        subprotocols=["grpc-ws"],
+        additional_headers={
+            "maker_address": mm_addr,
+            "subscribe_to_quotes_updates": "true",
+            "subscribe_to_settlement_updates": "true",
+        },
+    ) as ws:
+        print("🔌 MM WebSocket connected at ", WS_URL)
+        await ws.send(
+            encode_grpc_message(MakerStreamStreamingRequest(message_type="ping"))
+        )
+        pinger = asyncio.create_task(ping_loop(ws))
+        print("📡 MM connected — listening for RFQ requests...")
 
-        sub = {
-            "jsonrpc": "2.0",
-            "method": "subscribe",
-            "id": RFQ_STREAM_ID,
-            "params": {
-                "query": {
-                    "stream": "request",
-                    "market_ids": [INJUSDT_MARKET_ID],
-                }
-            },
-        }
-
-        await ws.send(json.dumps(sub))
-        print("📡 Subscribed to RFQ request stream")
-
-        async for raw in ws:
-            msg = json.loads(raw)
-            if msg['id'] == RFQ_STREAM_ID:
-                if msg["result"] == "subscribed":
+        try:
+            async for raw in ws:
+                if isinstance(raw, str):
                     continue
 
-                req_data = msg.get("result", {}).get("request")
-                if not req_data:
+                msg = decode_grpc_message(raw, MakerStreamResponse)
+                if msg is None or msg.message_type == "pong":
                     continue
 
-                req = RfqRequest(**req_data)
+                if msg.message_type == "challenge":
+                    cha = msg.challenge
+                    print(f"\n🔒 RFQ auth challenge nonce: {cha.nonce}")
+                    print(f"🔒 RFQ auth challenge expires at: {cha.expires_at}")
+                    print(f"🔒 RFQ auth challenge chain ID: {cha.evm_chain_id}")
+
+                    sig = sign_maker_challenge_v2(
+                        private_key=mm_pk,
+                        maker_inj=mm_addr,
+                        evm_chain_id=int(cha.evm_chain_id),
+                        nonce_hex=cha.nonce,
+                        expires_at=int(cha.expires_at),
+                    )
+                    await ws.send(
+                        encode_grpc_message(
+                            MakerStreamStreamingRequest(
+                                message_type="auth",
+                                auth=MakerAuth(
+                                    evm_chain_id=int(cha.evm_chain_id),
+                                    signature=sig,
+                                ),
+                            )
+                        )
+                    )
+                    continue
+
+                if msg.message_type != "request":
+                    print("response msgs:", msg)
+                    continue
+
+                req = msg.request
 
                 print("\n📩 RFQ request received")
                 print(f"Current block: {latest_block_height}")
                 print(req)
 
-                # RFQ supports expiry by timestamp OR height, not both
                 expiry_ts = Expiry(ts=int((time.time() + 8)*1000))
                 expiry_height = Expiry(h=latest_block_height + 10)
 
                 msn = 0  # TODO: fetch maker subaccount nonce from chain
                 await send_quote(ws, req, 1.2, mm_addr, mm_pk, expiry=expiry_ts, maker_subaccount_nonce=msn)
                 await send_quote(ws, req, 1.4, mm_addr, mm_pk, expiry=expiry_height, maker_subaccount_nonce=msn)
-                await send_quote(ws, None, 1.3, mm_addr, mm_pk, expiry=expiry_ts, maker_subaccount_nonce=msn)
-            else:
-                print('response msgs:', msg)
+        finally:
+            pinger.cancel()
 
 # for latency sensitive strategy, it's best to listen for block changes in case MM wants to set expiry block height
 async def block_sync_loop():
@@ -334,7 +442,6 @@ async def main():
     addr = eth_address_from_private_key(mm_pk)
     mm_addr = eth_to_inj_address(addr)
     await asyncio.gather(
-        block_sync_loop(),
         quote_loop(mm_addr, mm_pk),
     )
 if __name__ == "__main__":
