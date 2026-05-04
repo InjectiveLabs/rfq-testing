@@ -4,7 +4,7 @@ Code examples for integrating with the Injective RFQ system. Each example demons
 
 ## Examples by Language
 
-Each language has both **WebSocket** and **gRPC** variants of the MM/Retail flow.
+Each language has both **WebSocket** and **gRPC** variants of the MM/Retail flow. For the current public testnet deployment, the docs-verified end-to-end path is gRPC-web over WebSocket via `test_settlement.py`, including MakerStream auth.
 
 | Directory | Language | Role | Transport | Description |
 |-----------|----------|------|-----------|-------------|
@@ -22,7 +22,7 @@ Each language has both **WebSocket** and **gRPC** variants of the MM/Retail flow
 | File | Description |
 |------|-------------|
 | `test_roundtrip.py` | End-to-end RFQ roundtrip test (WebSocket) |
-| `test_settlement.py` | Settlement flow test (WebSocket) |
+| `test_settlement.py` | Full E2E settlement test (WebSocket, MakerStream auth, on-chain settlement) |
 | `test_settlement_grpc.py` | Full E2E settlement test (gRPC) |
 | `derive_key.py` | Key derivation utility |
 

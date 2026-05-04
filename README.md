@@ -123,7 +123,7 @@ The RFQ Indexer uses **gRPC-web over WebSocket** with protobuf framing:
 - **Framing:** `[1 byte flags][4 bytes length BE][protobuf payload]`
 - **Keep-alive:** Send `ping` message every 1 second
 - **Signing:** EIP-712 v2 (`SignQuote` / `SignedTakerIntent` typed-data digest → secp256k1 sign). Every quote and conditional order must carry `sign_mode: "v2"` and the matching `evm_chain_id` (`1439` testnet, `1776` mainnet) on the wire. Omitting `sign_mode` falls back to `"v1"` (deprecated, removed at launch); empty values are rejected. Spec lives in [`src/rfq_test/crypto/eip712.py`](src/rfq_test/crypto/eip712.py); see [PYTHON_BUILDING_GUIDE.md — Quote Signing (v2)](PYTHON_BUILDING_GUIDE.md#quote-signing-v2) for the full recipe.
-- **MakerStream auth:** The first server message after a maker connects is a `MakerChallenge`. Sign the `StreamAuthChallenge` typed-data with the same EIP-712 v2 domain separator and reply with `MakerAuth{evm_chain_id, signature}` before any quoting. Full protocol in [PYTHON_BUILDING_GUIDE.md — MakerStream Auth Handshake](PYTHON_BUILDING_GUIDE.md#makerstream-auth-handshake); reference implementations in [`examples/python-mm/main-grpc.py`](examples/python-mm/main-grpc.py), [`examples/go-mm/main-grpc/main.go`](examples/go-mm/main-grpc/main.go), and [`examples/ts-mm/main-grpc.ts`](examples/ts-mm/main-grpc.ts).
+- **MakerStream auth:** The first server message after a maker connects is a `MakerChallenge`. Sign the `StreamAuthChallenge` typed-data with the same EIP-712 v2 domain separator and reply with `MakerAuth{evm_chain_id, signature}` before any quoting. The WebSocket `MakerStreamClient` answers this challenge automatically when you pass `auth_private_key`, `auth_evm_chain_id`, and `auth_contract_address`; the testnet-verified E2E reference is [`examples/test_settlement.py`](examples/test_settlement.py). Full protocol in [PYTHON_BUILDING_GUIDE.md — MakerStream Auth Handshake](PYTHON_BUILDING_GUIDE.md#makerstream-auth-handshake).
 
 ### Maker Update Subscriptions
 
@@ -154,6 +154,9 @@ mm_client = MakerStreamClient(
     maker_address=maker_inj_address,
     subscribe_to_quotes_updates=True,
     subscribe_to_settlement_updates=True,
+    auth_private_key=maker_private_key,
+    auth_evm_chain_id=1439,
+    auth_contract_address=contract_address,
 )
 ```
 

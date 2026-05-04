@@ -502,7 +502,7 @@ async for resp in maker_stream:
         ...   # normal quoting loop
 ```
 
-The canonical end-to-end implementation lives in [`examples/python-mm/main-grpc.py`](examples/python-mm/main-grpc.py). Go and TypeScript ports are in [`examples/go-mm/main-grpc/main.go`](examples/go-mm/main-grpc/main.go) and [`examples/ts-mm/main-grpc.ts`](examples/ts-mm/main-grpc.ts). Use those scripts as the working reference for any maker connecting to the indexer.
+The testnet-verified Python E2E implementation lives in [`examples/test_settlement.py`](examples/test_settlement.py). It uses the WebSocket `MakerStreamClient`, passes `auth_private_key`, `auth_evm_chain_id`, and `auth_contract_address`, then verifies the full request -> quote -> `AcceptQuote` -> settlement-update path. The direct gRPC maker examples also show the same challenge-response protocol for native gRPC integrations, but the public docs path is gRPC-web over WebSocket.
 
 ### Failure modes
 
@@ -542,7 +542,7 @@ Append `/TakerStream` or `/MakerStream` to the base URL.
 
 - **URL:** `{base_url}/MakerStream`
 - **Connection metadata:** Send `maker_address` as a header when connecting. The indexer issues an EIP-712 v2 challenge against this address — see [MakerStream Auth Handshake](#makerstream-auth-handshake) for the protocol.
-- **Auth handshake:** First inbound message after connect is `MakerChallenge`. Sign and reply with `MakerAuth` before any quoting. Skipping this step keeps the stream open but produces no `request` events.
+- **Auth handshake:** First inbound message after connect is `MakerChallenge`. Sign and reply with `MakerAuth` before any quoting. Skipping this step keeps the stream open but produces no `request` events. The Python `MakerStreamClient` handles this automatically when configured with `auth_private_key`, `auth_evm_chain_id`, and `auth_contract_address`.
 - **Optional subscriptions:** Set `subscribe_to_quotes_updates: true` and `subscribe_to_settlement_updates: true` as headers to receive those maker stream updates.
 - **Receive:** Requests arrive as stream messages
 - **Quote update scope:** `quote_update` events are sent for quotes whose `maker` matches `maker_address`.
