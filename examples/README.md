@@ -4,7 +4,10 @@ Code examples for integrating with the Injective RFQ system. Each example demons
 
 ## Examples by Language
 
-Each language has both **WebSocket** and **gRPC** variants of the MM/Retail flow. For the current public testnet deployment, the docs-verified end-to-end path is gRPC-web over WebSocket via `test_settlement.py`, including MakerStream auth.
+Each language has both **WebSocket** and **gRPC** variants of the MM/Retail flow. For the
+current public testnet deployment, the docs-verified end-to-end paths are gRPC-web over
+WebSocket via `test_settlement.py` and native gRPC via `test_settlement_grpc.py`,
+including MakerStream auth.
 
 | Directory | Language | Role | Transport | Description |
 |-----------|----------|------|-----------|-------------|
@@ -14,8 +17,8 @@ Each language has both **WebSocket** and **gRPC** variants of the MM/Retail flow
 | `ts-retail/main-grpc.ts` | TypeScript | Retail (Taker) | gRPC | Same flow using gRPC Request + StreamQuote |
 | `go-mm/main/main.go` | Go | Market Maker | WebSocket | MM quote streaming via WebSocket |
 | `go-mm/main-grpc/main.go` | Go | Market Maker | gRPC | MM quote streaming via gRPC MakerStream |
-| `python-mm/main.py` | Python | Market Maker | WebSocket | MM quote streaming via WebSocket |
-| `python-mm/main-grpc.py` | Python | Market Maker | gRPC | MM quote streaming via gRPC MakerStream |
+| `python-mm/main.py` | Python | Market Maker | WebSocket/gRPC-web | MM quote streaming via authenticated MakerStream |
+| `python-mm/main-grpc.py` | Python | Market Maker | gRPC | MM quote streaming via authenticated gRPC MakerStream |
 
 ## Python Test Scripts
 
@@ -67,8 +70,8 @@ cp ../.env.example .env
 pip3 install injective-py eth-keys websockets eth-account python-dotenv grpcio
 
 python3 setup.py          # One-time MM setup
-python3 main.py           # Run MM quote bot (WebSocket)
-python3 main-grpc.py      # Run MM quote bot (gRPC)
+python3 main.py           # Run MM quote bot (WebSocket/gRPC-web + MakerStream auth)
+python3 main-grpc.py      # Run MM quote bot (native gRPC + MakerStream auth)
 ```
 
 ## Environment Variables

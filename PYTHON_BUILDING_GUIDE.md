@@ -502,7 +502,16 @@ async for resp in maker_stream:
         ...   # normal quoting loop
 ```
 
-The testnet-verified Python E2E implementation lives in [`examples/test_settlement.py`](examples/test_settlement.py). It uses the WebSocket `MakerStreamClient`, passes `auth_private_key`, `auth_evm_chain_id`, and `auth_contract_address`, then verifies the full request -> quote -> `AcceptQuote` -> settlement-update path. The direct gRPC maker examples also show the same challenge-response protocol for native gRPC integrations, but the public docs path is gRPC-web over WebSocket.
+The testnet-verified Python E2E implementations live in
+[`examples/test_settlement.py`](examples/test_settlement.py) for WebSocket/gRPC-web and
+[`examples/test_settlement_grpc.py`](examples/test_settlement_grpc.py) for native gRPC.
+The reusable WebSocket MM reference is
+[`examples/python-mm/main.py`](examples/python-mm/main.py); it connects with
+`maker_address`, lets `MakerStreamClient` answer `MakerChallenge` using
+`auth_private_key`, `auth_evm_chain_id`, and `auth_contract_address`, then signs and
+sends v2 quotes. The native gRPC maker reference in
+[`examples/python-mm/main-grpc.py`](examples/python-mm/main-grpc.py) shows the same
+challenge-response protocol without the reusable client wrapper.
 
 ### Failure modes
 

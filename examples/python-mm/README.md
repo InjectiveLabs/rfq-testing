@@ -15,9 +15,14 @@ cp ./env.example ./env
 python3 python-mm/setup.py
 ```
 
-# MM main script
+# MM main scripts
+
+`main.py` uses WebSocket/gRPC-web MakerStream and answers the required
+MakerStream auth challenge before quoting. `main-grpc.py` uses native gRPC
+and follows the same challenge-response flow.
 
 ```
 # run main script (assume we have .env file from above step already)
+python3 python-mm/main.py
 python3 python-mm/main-grpc.py
 ```
