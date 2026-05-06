@@ -1,7 +1,7 @@
 # Python Guide: Building RFQ Market Making & Retail Tools
 
 **For teams building standalone MM (Market Maker) or retail trading scripts.**  
-This guide helps you avoid common pitfalls and build correctly from day one. You do **not** need the `rfq-testing` framework—everything here is self-contained.
+This guide helps you avoid common pitfalls and build correctly from day one. You do **not** need any separate RFQ testing framework—everything here is self-contained in `injective-rfq-toolkit`.
 
 ---
 
@@ -136,7 +136,7 @@ for msg_type in MSG_TYPES:
 
 ## Quote Signing (v2)
 
-The rfq-testing repo standard is **EIP-712 v2** signing. Every quote and conditional order MUST carry `sign_mode: "v2"` on the wire; missing or empty signing modes are rejected by the indexer.
+The injective-rfq-toolkit standard is **EIP-712 v2** signing. Every quote and conditional order MUST carry `sign_mode: "v2"` on the wire; missing or empty signing modes are rejected by the indexer.
 
 > **TL;DR:** Build the `SignQuote` typed-data digest, sign it with secp256k1 raw (no EIP-191 prefix), prepend `0x` to the signature, and put `sign_mode: "v2"` in the wire payload.
 
@@ -255,7 +255,7 @@ signature = sign_quote_v2(
 # taker empty/None -> blind. Do not pass binding_kind or nonce to this helper.
 ```
 
-### Standalone v2 signing (no rfq-testing dep)
+### Standalone v2 signing (no external RFQ dependency)
 
 If you can't import `rfq_test`, this is the byte-compatible reference (mirrors `service/rfq/signature/eip712.go` in `injective-indexer`):
 
@@ -478,7 +478,7 @@ def sign_maker_challenge_v2(
     return "0x" + (sig.r.to_bytes(32, "big") + sig.s.to_bytes(32, "big") + bytes([v])).hex()
 ```
 
-`domain_separator(...)` is the helper from the [Standalone v2 signing](#standalone-v2-signing-no-rfq-testing-dep) section above — same bytes, same chain ID. Reuse it.
+`domain_separator(...)` is the helper from the [Standalone v2 signing](#standalone-v2-signing-no-external-rfq-dependency) section above — same bytes, same chain ID. Reuse it.
 
 ### End-to-end handler
 
