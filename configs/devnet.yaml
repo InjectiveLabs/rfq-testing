@@ -16,10 +16,10 @@ chain:
 
 # RFQ Indexer API (devnet). Same gRPC-over-WS protocol as testnet.
 indexer:
-  ws_endpoint: "wss://devnet.rfq.ws.injective.dev/injective_rfq_rpc.InjectiveRfqRPC"
+  ws_endpoint: "wss://devnet.api.injective.dev/injective_rfq_rpc.InjectiveRfqRPC"
   http_endpoint: "https://devnet.api.injective.dev"
-  grpc_endpoint: "devnet.rfq.grpc.injective.dev:443"
-  grpc_web_endpoint: "https://devnet.rfq.grpc.injective.dev/injective_rfq_rpc.InjectiveRfqRPC"
+  grpc_endpoint: "devnet.api.injective.dev:443"
+  grpc_web_endpoint: "https://devnet.api.injective.dev/injective_rfq_rpc.InjectiveRfqRPC"
 
 contract:
   address: "inj19g43wyj843ydkc845dcdea6su4mgfjwnpjz6h5"
