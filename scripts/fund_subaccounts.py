@@ -124,17 +124,24 @@ async def main():
     grpc_exchange = getattr(config.chain, "grpc_exchange_endpoint", None) or grpc_main
     grpc_explorer = getattr(config.chain, "grpc_explorer_endpoint", None) or grpc_main
     chain_stream = getattr(config.chain, "chain_stream_endpoint", None) or grpc_main
-    network = Network.custom(
-        lcd_endpoint=config.chain.lcd_endpoint,
-        tm_websocket_endpoint="",
-        grpc_endpoint=grpc_main,
-        grpc_exchange_endpoint=grpc_exchange,
-        grpc_explorer_endpoint=grpc_explorer,
-        chain_id=config.chain.chain_id,
-        env="testnet",
-        chain_stream_endpoint=chain_stream,
-        official_tokens_list_url="",
-    )
+    if config.chain.chain_id == "injective-1":
+        network = Network.mainnet()
+    elif config.chain.chain_id == "injective-888":
+        network = Network.testnet()
+    elif config.chain.chain_id == "injective-777":
+        network = Network.devnet()
+    else:
+        network = Network.custom(
+            lcd_endpoint=config.chain.lcd_endpoint,
+            tm_websocket_endpoint="",
+            grpc_endpoint=grpc_main,
+            grpc_exchange_endpoint=grpc_exchange,
+            grpc_explorer_endpoint=grpc_explorer,
+            chain_id=config.chain.chain_id,
+            env=config.chain.chain_id,
+            chain_stream_endpoint=chain_stream,
+            official_tokens_list_url="",
+        )
     
     # Fund MM wallets
     if not args.retail_only and mm_seed:
