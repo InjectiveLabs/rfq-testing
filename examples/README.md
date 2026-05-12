@@ -19,6 +19,7 @@ including MakerStream auth.
 | `go-mm/main-grpc/main.go` | Go | Market Maker | gRPC | MM quote streaming via gRPC MakerStream |
 | `python-mm/main.py` | Python | Market Maker | WebSocket/gRPC-web | MM quote streaming via authenticated MakerStream |
 | `python-mm/main-grpc.py` | Python | Market Maker | gRPC | MM quote streaming via authenticated gRPC MakerStream |
+| `python-mm/mark_quote_loop.py` | Python | Market Maker | WebSocket/gRPC-web | Configurable mark-based quote loop with optional fixed-price quoting |
 
 ## Python Test Scripts
 
@@ -74,6 +75,21 @@ python3 main.py           # Run MM quote bot (WebSocket/gRPC-web + MakerStream a
 python3 main-grpc.py      # Run MM quote bot (native gRPC + MakerStream auth)
 ```
 
+For a configurable market-maker loop that quotes `mark ± edge_bps` and logs
+quote/settlement updates:
+
+```bash
+RFQ_ENV=testnet python3 mark_quote_loop.py \
+  --edge-bps 25 \
+  --max-quantity 20 \
+  --maker-subaccount-nonce 0
+```
+
+For mainnet or private deployments, set `RFQ_CONTRACT_ADDRESS` and the matching
+`MAINNET_MM_PRIVATE_KEY`/`MM_PRIVATE_KEY` in your environment first. Use
+`--fixed-price <price>` when you want to quote one static price for simple live
+tests.
+
 ## Environment Variables
 
 See `.env.example` for required configuration:
@@ -86,6 +102,8 @@ See `.env.example` for required configuration:
 | `CONTRACT_ADDRESS` | RFQ contract address |
 | `CHAIN_ID` | Injective chain ID |
 | `GRPC_ENDPOINT` | gRPC endpoint (e.g. `localhost:9910`) — required for gRPC examples |
+| `RFQ_CONTRACT_ADDRESS` | Override RFQ contract address for config-driven Python examples |
+| `RFQ_ENV` | Environment to load: `local`, `devnet`, `testnet`, or `mainnet` |
 
 ## Architecture
 
