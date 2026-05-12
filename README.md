@@ -1,6 +1,6 @@
 # injective-rfq-toolkit
 
-**The Injective RFQ developer toolkit.** A Python package, generated protobuf stubs, EIP-712 v2 signing primitives, end-to-end test harness, and reference market-maker / retail implementations in Python, TypeScript, and Go — all in one repo, all working against the same testnet contract.
+**The Injective RFQ developer toolkit.** A Python package, generated protobuf stubs, EIP-712 v2 signing primitives, end-to-end test harness, and reference market-maker / retail implementations in Python, TypeScript, and Go — all in one repo, with testnet defaults and configurable mainnet/private deployments.
 
 > **Positioning.** This is a *toolkit*: importable client library + signing helpers + generated proto + reference scripts + integration test suite, packaged together. Partners use it three ways:
 > 1. **`pip install -e .`** and import `rfq_test` to build a Python bot on top of `MakerStreamClient`, `sign_quote_v2`, etc.
@@ -44,6 +44,7 @@ examples/                    # End-to-end reference implementations
   ├── test_settlement_grpc.py#   Same flow over native gRPC
   ├── taker_multi_quote.py   #   Multiple MMs quoting the same RFQ
   ├── python-mm/main-grpc.py #   Standalone MM bot (no rfq_test dep) — gRPC, auth-handshake
+  ├── python-mm/mark_quote_loop.py # Configurable mark-based MM quote loop
   ├── go-mm/main-grpc/       #   Same bot in Go
   └── ts-mm/main-grpc.ts     #   Same bot in TypeScript
 tests/                       # pytest suite — smoke / functional / contract / load / validation
@@ -139,6 +140,7 @@ python scripts/fund_subaccounts.py     # USDC margin into the maker/retail subac
 python examples/test_roundtrip.py      # WS round-trip: request → ACK → quote
 python examples/test_settlement.py     # full E2E with on-chain AcceptQuote
 python examples/python-mm/main-grpc.py # standalone MM bot (no rfq_test dep)
+python examples/python-mm/mark_quote_loop.py --edge-bps 25 --max-quantity 20
 ```
 
 For TypeScript and Go reference makers:
@@ -164,12 +166,12 @@ pytest                   # everything except `load`
 |------|---------|---------|
 | Cosmos chain ID | `injective-888` | `injective-1` |
 | EVM chain ID (EIP-712 domain) | `1439` | `1776` |
-| RFQ Contract | `inj1qw7jk82hjvf79tnjykux6zacuh9gl0z0wl3ruk` | _TBA_ |
-| MakerStream WSS | `wss://testnet.rfq.ws.injective.network/injective_rfq_rpc.InjectiveRfqRPC/MakerStream` | _TBA_ |
-| TakerStream WSS | `wss://testnet.rfq.ws.injective.network/injective_rfq_rpc.InjectiveRfqRPC/TakerStream` | _TBA_ |
-| Indexer gRPC-web | `https://testnet.rfq.grpc.injective.network/injective_rfq_rpc.InjectiveRfqRPC` | _TBA_ |
+| RFQ Contract | `inj1qw7jk82hjvf79tnjykux6zacuh9gl0z0wl3ruk` | Set `RFQ_CONTRACT_ADDRESS` |
+| MakerStream WSS | `wss://testnet.rfq.ws.injective.network/injective_rfq_rpc.InjectiveRfqRPC/MakerStream` | `wss://rfq.ws.injective.network/injective_rfq_rpc.InjectiveRfqRPC/MakerStream` |
+| TakerStream WSS | `wss://testnet.rfq.ws.injective.network/injective_rfq_rpc.InjectiveRfqRPC/TakerStream` | `wss://rfq.ws.injective.network/injective_rfq_rpc.InjectiveRfqRPC/TakerStream` |
+| Indexer gRPC-web | `https://testnet.rfq.grpc.injective.network/injective_rfq_rpc.InjectiveRfqRPC` | `https://rfq.grpc-web.injective.network/injective_rfq_rpc.InjectiveRfqRPC` |
 | Chain gRPC | `testnet-grpc.injective.dev:443` | `sentry.chain.grpc.injective.network:443` |
-| LCD | `https://testnet.sentry.lcd.injective.network` | `https://lcd.injective.network` |
+| LCD | `https://testnet.sentry.lcd.injective.network` | `https://sentry.lcd.injective.network` |
 | Faucet | `https://testnet-faucet.injective.dev` | n/a |
 
 YAML defaults live in `configs/{env}.yaml`; override individual fields via env vars when running against a bespoke deployment.
