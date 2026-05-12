@@ -48,9 +48,13 @@ class MarketConfig(BaseModel):
     symbol: str = Field(..., description="Human-readable symbol (e.g., INJ/USDT)")
     base: str = Field(..., description="Base asset (e.g., INJ)")
     quote: str = Field(..., description="Quote asset (e.g., USDT)")
+    quote_denom: Optional[str] = Field(None, description="Quote denom used on chain")
     price: Optional[Decimal] = Field(None, description="Static price (for local)")
     price_source: Literal["static", "oracle"] = "static"
     min_quantity: Decimal = Field(Decimal("1.0"), description="Minimum trade quantity")
+    min_price_tick: Optional[Decimal] = Field(None, description="Minimum price tick size")
+    min_quantity_tick: Optional[Decimal] = Field(None, description="Minimum quantity tick size")
+    min_notional: Optional[Decimal] = Field(None, description="Minimum notional value")
     
     @property
     def typical_margin(self) -> Decimal:
@@ -78,7 +82,7 @@ class EnvironmentConfig(BaseModel):
     """Full environment configuration."""
     model_config = ConfigDict(extra="forbid")
     
-    environment: Literal["local", "devnet", "testnet"]
+    environment: Literal["local", "devnet", "testnet", "mainnet"]
     chain: ChainConfig
     indexer: IndexerConfig
     contract: ContractConfig
