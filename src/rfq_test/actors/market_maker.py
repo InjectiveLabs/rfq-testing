@@ -208,7 +208,7 @@ class MarketMaker:
         )
 
         # Build quote payload (indexer expects chain_id, contract_address, and
-        # sign_mode set per https://devnet.api.injective.dev/swagger/#/).
+        # sign_mode — see indexer swagger).
         quote_data = {
             "rfq_id": rfq_id,
             "market_id": market_id,

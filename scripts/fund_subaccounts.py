@@ -128,8 +128,6 @@ async def main():
         network = Network.mainnet()
     elif config.chain.chain_id == "injective-888":
         network = Network.testnet()
-    elif config.chain.chain_id == "injective-777":
-        network = Network.devnet()
     else:
         network = Network.custom(
             lcd_endpoint=config.chain.lcd_endpoint,

@@ -45,7 +45,7 @@ class QuoteFactory:
             maker_private_key: Maker's private key (hex)
             maker_address: Maker's `inj1...` address
             request: The RFQ request being quoted
-            evm_chain_id: EVM chain ID for the EIP-712 domain (testnet/devnet=1439)
+            evm_chain_id: EVM chain ID for the EIP-712 domain (testnet=1439)
             contract_address: RFQ contract bech32 address (verifying contract)
             chain_id: Cosmos chain_id, included in the wire payload only.
                 The v2 signature does NOT bind it (the domain separator does).

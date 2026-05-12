@@ -175,8 +175,6 @@ class ContractClient:
                 self._network = Network.mainnet()
             elif self.chain_config.chain_id == "injective-888":
                 self._network = Network.testnet()
-            elif self.chain_config.chain_id == "injective-777":
-                self._network = Network.devnet()
             else:
                 self._network = Network.custom(
                     lcd_endpoint=self.chain_config.lcd_endpoint,

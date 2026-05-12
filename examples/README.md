@@ -103,7 +103,7 @@ See `.env.example` for required configuration:
 | `CHAIN_ID` | Injective chain ID |
 | `GRPC_ENDPOINT` | gRPC endpoint (e.g. `localhost:9910`) — required for gRPC examples |
 | `RFQ_CONTRACT_ADDRESS` | Override RFQ contract address for config-driven Python examples |
-| `RFQ_ENV` | Environment to load: `local`, `devnet`, `testnet`, or `mainnet` |
+| `RFQ_ENV` | Environment to load: `local`, `testnet`, or `mainnet` |
 
 ## Architecture
 

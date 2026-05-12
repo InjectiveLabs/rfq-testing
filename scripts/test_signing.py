@@ -3,7 +3,7 @@
 
 The indexer recovers an `inj1` address from the signature and checks it
 against the expected maker / taker. We mirror that verification here so
-the round-trip can run without contacting devnet — useful for catching
+the round-trip can run without contacting an indexer — useful for catching
 encoding drift before pushing.
 
 Set RFQ_TEST_MM_PRIVATE_KEY (and optionally RFQ_TEST_MM_INJ for an
@@ -29,9 +29,9 @@ from rfq_test.crypto.eip712 import (
     signed_taker_intent_digest,
 )
 
-# Devnet defaults (from Slack #rfq-eng 2026-04-29 and configs/devnet.yaml).
+# Testnet defaults (see configs/testnet.yaml).
 EVM_CHAIN_ID = 1439
-CONTRACT_BECH32 = "inj19g43wyj843ydkc845dcdea6su4mgfjwnpjz6h5"
+CONTRACT_BECH32 = "inj1qw7jk82hjvf79tnjykux6zacuh9gl0z0wl3ruk"
 MARKET_ID = (
     "0xdc70164d7120529c3cd84278c98df4151210c0447a65a2aab03459cf328de41e"
 )

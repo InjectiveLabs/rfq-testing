@@ -899,9 +899,9 @@ class MakerStreamClient(BaseStreamClient):
 
         expiry_ts = int(quote_data.get("expiry", 0))
         min_fill_quantity = quote_data.get("min_fill_quantity")
-        # sign_mode is required by the indexer (post 2026-04-29 devnet deploy);
-        # an empty string fails validation with `value of message.sign_mode must
-        # be one of "v1", "v2"`. We default to v2 — this client only signs v2.
+        # sign_mode is required by the indexer; an empty string fails validation
+        # with `value of message.sign_mode must be one of "v1", "v2"`.
+        # We default to v2 — this client only signs v2.
         sign_mode = quote_data.get("sign_mode") or "v2"
         quote_kwargs = {
             "chain_id": quote_data.get("chain_id", ""),

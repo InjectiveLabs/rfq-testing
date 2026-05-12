@@ -16,7 +16,7 @@ class Settings(BaseSettings):
     """Application settings loaded from environment variables.
     
     Credentials are stored per-environment with prefixes:
-    LOCAL_, DEVNET_, TESTNET_, MAINNET_
+    LOCAL_, TESTNET_, MAINNET_
     
     The active environment is selected via RFQ_ENV, and the appropriate
     credentials are automatically used via computed properties.
@@ -28,9 +28,9 @@ class Settings(BaseSettings):
         extra="ignore",
     )
     
-    # Environment selection: local | devnet | testnet | mainnet
+    # Environment selection: local | testnet | mainnet
     rfq_env: str = Field(default="local", alias="RFQ_ENV")
-    
+
     # ============================================================
     # Local Environment Credentials
     # ============================================================
@@ -39,17 +39,6 @@ class Settings(BaseSettings):
     local_mm_private_key: Optional[str] = Field(default=None, alias="LOCAL_MM_PRIVATE_KEY")
     local_load_test_mm_seed_phrase: Optional[str] = Field(default=None, alias="LOCAL_LOAD_TEST_MM_SEED_PHRASE")
     local_load_test_retail_seed_phrase: Optional[str] = Field(default=None, alias="LOCAL_LOAD_TEST_RETAIL_SEED_PHRASE")
-    
-
-    
-    # ============================================================
-    # Devnet Environment Credentials
-    # ============================================================
-    devnet_admin_private_key: Optional[str] = Field(default=None, alias="DEVNET_ADMIN_PRIVATE_KEY")
-    devnet_retail_private_key: Optional[str] = Field(default=None, alias="DEVNET_RETAIL_PRIVATE_KEY")
-    devnet_mm_private_key: Optional[str] = Field(default=None, alias="DEVNET_MM_PRIVATE_KEY")
-    devnet_load_test_mm_seed_phrase: Optional[str] = Field(default=None, alias="DEVNET_LOAD_TEST_MM_SEED_PHRASE")
-    devnet_load_test_retail_seed_phrase: Optional[str] = Field(default=None, alias="DEVNET_LOAD_TEST_RETAIL_SEED_PHRASE")
 
     # ============================================================
     # Testnet Environment Credentials
@@ -134,7 +123,7 @@ def load_environment_config(env_name: str, config_dir: Optional[Path] = None) ->
     """Load environment configuration from YAML file.
     
     Args:
-        env_name: Environment name (local, devnet, testnet, mainnet)
+        env_name: Environment name (local, testnet, mainnet)
         config_dir: Optional path to configs directory
         
     Returns:
