@@ -16,7 +16,7 @@ class Settings(BaseSettings):
     """Application settings loaded from environment variables.
     
     Credentials are stored per-environment with prefixes:
-    LOCAL_, TESTNET_
+    LOCAL_, DEVNET_, TESTNET_, MAINNET_
     
     The active environment is selected via RFQ_ENV, and the appropriate
     credentials are automatically used via computed properties.
@@ -28,7 +28,7 @@ class Settings(BaseSettings):
         extra="ignore",
     )
     
-    # Environment selection: local | devnet | testnet
+    # Environment selection: local | devnet | testnet | mainnet
     rfq_env: str = Field(default="local", alias="RFQ_ENV")
     
     # ============================================================
@@ -59,6 +59,15 @@ class Settings(BaseSettings):
     testnet_mm_private_key: Optional[str] = Field(default=None, alias="TESTNET_MM_PRIVATE_KEY")
     testnet_load_test_mm_seed_phrase: Optional[str] = Field(default=None, alias="TESTNET_LOAD_TEST_MM_SEED_PHRASE")
     testnet_load_test_retail_seed_phrase: Optional[str] = Field(default=None, alias="TESTNET_LOAD_TEST_RETAIL_SEED_PHRASE")
+
+    # ============================================================
+    # Mainnet Environment Credentials
+    # ============================================================
+    mainnet_admin_private_key: Optional[str] = Field(default=None, alias="MAINNET_ADMIN_PRIVATE_KEY")
+    mainnet_retail_private_key: Optional[str] = Field(default=None, alias="MAINNET_RETAIL_PRIVATE_KEY")
+    mainnet_mm_private_key: Optional[str] = Field(default=None, alias="MAINNET_MM_PRIVATE_KEY")
+    mainnet_load_test_mm_seed_phrase: Optional[str] = Field(default=None, alias="MAINNET_LOAD_TEST_MM_SEED_PHRASE")
+    mainnet_load_test_retail_seed_phrase: Optional[str] = Field(default=None, alias="MAINNET_LOAD_TEST_RETAIL_SEED_PHRASE")
     
     # ============================================================
     # Faucet & Endpoint Overrides
@@ -68,8 +77,12 @@ class Settings(BaseSettings):
     # Optional endpoint overrides (takes precedence over YAML config)
     indexer_ws_url: Optional[str] = Field(default=None, alias="RFQ_WS_URL")
     indexer_http_url: Optional[str] = Field(default=None, alias="RFQ_HTTP_URL")
+    indexer_grpc_url: Optional[str] = Field(default=None, alias="RFQ_GRPC_URL")
+    indexer_grpc_web_url: Optional[str] = Field(default=None, alias="RFQ_GRPC_WEB_URL")
     chain_grpc_url: Optional[str] = Field(default=None, alias="CHAIN_GRPC_URL")
     chain_lcd_url: Optional[str] = Field(default=None, alias="CHAIN_LCD_URL")
+    contract_address: Optional[str] = Field(default=None, alias="RFQ_CONTRACT_ADDRESS")
+    evm_chain_id: Optional[int] = Field(default=None, alias="RFQ_EVM_CHAIN_ID")
     
     # ============================================================
     # Computed Properties - Return credentials for active environment
@@ -121,7 +134,7 @@ def load_environment_config(env_name: str, config_dir: Optional[Path] = None) ->
     """Load environment configuration from YAML file.
     
     Args:
-        env_name: Environment name (local, testnet)
+        env_name: Environment name (local, devnet, testnet, mainnet)
         config_dir: Optional path to configs directory
         
     Returns:
@@ -166,10 +179,18 @@ def get_environment_config() -> EnvironmentConfig:
         config.indexer.ws_endpoint = settings.indexer_ws_url
     if settings.indexer_http_url:
         config.indexer.http_endpoint = settings.indexer_http_url
+    if settings.indexer_grpc_url:
+        config.indexer.grpc_endpoint = settings.indexer_grpc_url
+    if settings.indexer_grpc_web_url:
+        config.indexer.grpc_web_endpoint = settings.indexer_grpc_web_url
     if settings.chain_grpc_url:
         config.chain.grpc_endpoint = settings.chain_grpc_url
     if settings.chain_lcd_url:
         config.chain.lcd_endpoint = settings.chain_lcd_url
+    if settings.contract_address:
+        config.contract.address = settings.contract_address
+    if settings.evm_chain_id:
+        config.chain.evm_chain_id = settings.evm_chain_id
     
     return config
 
