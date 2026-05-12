@@ -261,7 +261,12 @@ class PriceFetcher:
 
         Same priority as get_price_tick. Returns None when unknown.
         """
-        return self._market_info.get(market.id, {}).get("min_qty_tick")
+        cached = self._market_info.get(market.id, {})
+        if "min_qty_tick" in cached:
+            return cached["min_qty_tick"]
+        if market.min_quantity_tick is not None:
+            return market.min_quantity_tick
+        return None
 
     async def _fetch_oracle_price(self, market: MarketConfig) -> Decimal:
         """Fetch price from Injective LCD, caching tick sizes as a side-effect.
