@@ -171,8 +171,12 @@ class ContractClient:
                     chain_stream_endpoint=chain_stream,
                     official_tokens_list_url="",
                 )
-            elif "888" in self.chain_config.chain_id:
+            elif self.chain_config.chain_id == "injective-1":
+                self._network = Network.mainnet()
+            elif self.chain_config.chain_id == "injective-888":
                 self._network = Network.testnet()
+            elif self.chain_config.chain_id == "injective-777":
+                self._network = Network.devnet()
             else:
                 self._network = Network.custom(
                     lcd_endpoint=self.chain_config.lcd_endpoint,
@@ -181,7 +185,7 @@ class ContractClient:
                     grpc_exchange_endpoint=grpc_exchange,
                     grpc_explorer_endpoint=grpc_explorer,
                     chain_id=self.chain_config.chain_id,
-                    env="local",
+                    env=self.chain_config.chain_id,
                     chain_stream_endpoint=chain_stream,
                     official_tokens_list_url="",
                 )
