@@ -1,0 +1,37 @@
+# Mainnet environment configuration
+environment: mainnet
+
+chain:
+  grpc_endpoint: "sentry.chain.grpc.injective.network:443"
+  grpc_exchange_endpoint: "sentry.exchange.grpc.injective.network:443"
+  grpc_explorer_endpoint: "sentry.explorer.grpc.injective.network:443"
+  chain_stream_endpoint: "sentry.chain.stream.injective.network:443"
+  lcd_endpoint: "https://sentry.lcd.injective.network"
+  chain_id: "injective-1"
+  evm_chain_id: 1776
+  tx_timeout_seconds: 20
+
+indexer:
+  ws_endpoint: "wss://rfq.ws.injective.network/injective_rfq_rpc.InjectiveRfqRPC"
+  http_endpoint: "https://rfq.grpc-web.injective.network"
+  grpc_endpoint: "rfq.grpc.injective.network:443"
+  grpc_web_endpoint: "https://rfq.grpc-web.injective.network/injective_rfq_rpc.InjectiveRfqRPC"
+
+contract:
+  # Set RFQ_CONTRACT_ADDRESS in .env for private/test deployments.
+  address: ""
+
+markets:
+  - id: "0xb562b7a440a435e0065d1a22ab74f1f40f25e35476854cd62ee2897c444a287d"
+    symbol: "DOGE/USDC PERP"
+    base: "DOGE"
+    quote: "USDC"
+    quote_denom: "erc20:0xa00C59fF5a080D2b954d0c75e46E22a0c371235a"
+    price_source: "oracle"
+    min_quantity: 1
+    min_price_tick: "0.0001"
+    min_quantity_tick: "1"
+    min_notional: "1"
+
+faucet:
+  enabled: false
