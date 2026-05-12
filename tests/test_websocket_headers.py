@@ -140,7 +140,7 @@ async def test_maker_stream_answers_auth_challenge():
 
 @pytest.mark.asyncio
 async def test_market_maker_passes_wallet_address_to_stream_client():
-    wallet = type("WalletStub", (), {"inj_address": "inj1maker"})()
+    wallet = type("WalletStub", (), {"inj_address": "inj1maker", "private_key": "11" * 32})()
 
     with patch("rfq_test.actors.market_maker.MakerStreamClient") as stream_client_cls:
         stream_client = AsyncMock()
@@ -149,6 +149,8 @@ async def test_market_maker_passes_wallet_address_to_stream_client():
         maker = MarketMaker(
             wallet=wallet,
             ws_url="wss://example.test/injective_rfq_rpc.InjectiveRfqRPC",
+            contract_address="inj1contract",
+            evm_chain_id=1776,
             subscribe_to_quotes_updates=True,
             subscribe_to_settlement_updates=True,
         )
@@ -159,6 +161,9 @@ async def test_market_maker_passes_wallet_address_to_stream_client():
         maker_address="inj1maker",
         subscribe_to_quotes_updates=True,
         subscribe_to_settlement_updates=True,
+        auth_private_key="11" * 32,
+        auth_evm_chain_id=1776,
+        auth_contract_address="inj1contract",
     )
     stream_client.connect.assert_awaited_once()
 

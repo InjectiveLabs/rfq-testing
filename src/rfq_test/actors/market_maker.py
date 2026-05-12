@@ -60,6 +60,9 @@ class MarketMaker:
             maker_address=self.address,
             subscribe_to_quotes_updates=self.subscribe_to_quotes_updates,
             subscribe_to_settlement_updates=self.subscribe_to_settlement_updates,
+            auth_private_key=self.wallet.private_key,
+            auth_evm_chain_id=self.evm_chain_id,
+            auth_contract_address=self.contract_address,
         )
         await self._ws_client.connect()
     
@@ -218,6 +221,7 @@ class MarketMaker:
             "taker": taker,
             "signature": signature,
             "sign_mode": "v2",
+            "evm_chain_id": self.evm_chain_id,
             "maker_subaccount_nonce": maker_subaccount_nonce,
             "contract_address": self.contract_address,
         }
