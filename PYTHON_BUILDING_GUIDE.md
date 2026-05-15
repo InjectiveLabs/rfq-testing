@@ -349,9 +349,9 @@ ConnectionClosedError(Close(code=1011, reason='invalid request:
   missing or unsupported sign_mode'))
 ```
 
-> **`evm_chain_id` (proto field 24) is required when `sign_mode="v2"`.** It tells the indexer which chain ID to use when reconstructing the domain separator and must match one of the indexer's configured chain IDs. The same field exists on `RFQQuoteType`, the conditional-order request, the `MakerAuth` envelope, and the indexer's `MakerChallenge` message — wherever a v2 signature appears, the chain ID rides alongside it. The field is ignored when `sign_mode="v1"`.
+> **`evm_chain_id` (proto field 24) is required when `sign_mode="v2"`.** It tells the indexer which chain ID to use when reconstructing the domain separator and must match one of the indexer's configured chain IDs. The same field exists on `RFQQuoteType`, the conditional-order request, the `MakerAuth` envelope, and the indexer's `MakerChallenge` message — wherever a v2 signature appears, the chain ID rides alongside it.
 
-> **`sign_mode` defaults.** When `sign_mode` is omitted on the wire, the indexer falls back to `"v1"` for backward compatibility. Set `sign_mode="v2"` explicitly on every payload — `"v1"` is deprecated and will be removed at launch.
+> **`sign_mode` is mandatory.** Set `sign_mode="v2"` explicitly on every payload; omitted or empty modes fail signing-mode validation.
 
 ---
 
@@ -580,7 +580,7 @@ The indexer expects a specific field order for `RFQQuoteType`. If you encode in 
 | 12 | signature | string | hex with `0x`, 65 bytes (r‖s‖v) |
 | 19 | maker_subaccount_nonce | uint32 | included in v2 digest as `makerSubaccountNonce` |
 | 20 | min_fill_quantity | string | optional — included in v2 digest as `"0"` if absent |
-| 23 | **sign_mode** | string | **Required.** `"v2"` for everything this client signs. Defaults to `"v1"` when omitted (deprecated). |
+| 23 | **sign_mode** | string | **Required.** `"v2"` for everything this client signs. Omitted or empty values are rejected. |
 | 24 | **evm_chain_id** | uint64 | **Required when `sign_mode="v2"`.** Same value embedded in the EIP-712 domain separator (`1439` testnet, `1776` mainnet). |
 
 ---
@@ -748,7 +748,7 @@ The RFQ indexer monitors mark prices and triggers the order when the condition i
 | `unfilled_action` | object/null | Optional. **Bound by the v2 signature** as `(unfilledActionKind, unfilledActionPrice)`. `null` → `(0, "0")`; `{"market": {}}` → `(2, "0")`; `{"limit": {"price": "X"}}` → `(1, "X")`. Match the wire value to what you signed. |
 | `cid` | string/null | Optional client ID. Bound by the v2 signature. |
 | `allowed_relayer` | string/null | Optional. Bound by the v2 signature. |
-| `sign_mode` | string | **Required on the wire.** Use `"v2"`. Defaults to `"v1"` (deprecated) if omitted. |
+| `sign_mode` | string | **Required on the wire.** Use `"v2"`. Omitted or empty values are rejected. |
 | `evm_chain_id` | uint64 | **Required when `sign_mode="v2"`.** Same value as the domain separator's `chainId` (`1439` testnet, `1776` mainnet). On TakerStream the field name is `conditional_order_evm_chain_id` (proto field 6); on direct gRPC/REST creates it is `evm_chain_id` (proto field 4). |
 
 ### Signing a Conditional Order (v2)
