@@ -113,7 +113,7 @@ interface Quote {
   expiry: Expiry;
   signature: string; // Binary is typically base64 or hex encoded string
   nonce: number | undefined;
-  sign_mode?: "v2"; // v2 only — v1 is deprecated and will be rejected at launch
+  sign_mode?: "v2"; // v2 only
   evm_chain_id?: number;
   maker_subaccount_nonce?: number;
   min_fill_quantity?: string;

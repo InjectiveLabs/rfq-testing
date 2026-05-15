@@ -3,9 +3,9 @@
  *
  * Uses native gRPC MakerStream (bidirectional) instead of WebSocket.
  *
- * Wire payloads MUST carry `sign_mode: "v2"` — empty values are rejected
- * with `value of message.sign_mode must be one of "v1", "v2"`. The full
- * spec lives in PYTHON_BUILDING_GUIDE.md and rfq.inj.so/onboarding.html#sign.
+ * Wire payloads MUST carry `sign_mode: "v2"` — empty values are rejected by
+ * signing-mode validation. The full spec lives in PYTHON_BUILDING_GUIDE.md
+ * and rfq.inj.so/onboarding.html#sign.
  *
  * Flow:
  * 0. MM has already granted permissions to RFQ contract (see setup.ts)

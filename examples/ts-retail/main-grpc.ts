@@ -114,7 +114,7 @@ interface CollectedQuote {
   quantity: string;
   expiry: { ts?: number; h?: number };
   signature: string;
-  sign_mode?: "v2"; // v2 only — v1 is deprecated and will be rejected at launch
+  sign_mode?: "v2"; // v2 only
   evm_chain_id?: number;
   maker_subaccount_nonce?: number;
   min_fill_quantity?: string;
@@ -163,7 +163,7 @@ async function acceptQuote(
   console.log("\n📌 Accepting quotes on-chain...");
 
   // Convert signatures from hex to base64 for the contract.
-  // sign_mode is "v2" — the legacy v1 path is being retired.
+  // Contract quote payloads carry v2 signing metadata.
   const contractQuotes = quotes.map((q) => ({
     maker: q.maker,
     margin: q.margin,

@@ -160,8 +160,7 @@ function domainSeparator(evmChainId: number, contractBech32: string): Uint8Array
  * Returns a 0x-prefixed 65-byte hex string (r ‖ s ‖ v).
  *
  * Pair this with `sign_mode: "v2"` on the wire payload — the indexer
- * rejects empty values with `value of message.sign_mode must be one of
- * "v1", "v2"`.
+ * rejects empty or unsupported signing modes.
  */
 export function signQuoteV2(input: SignQuoteV2Input): string {
   if ((input.expiryMs == null) === (input.expiryHeight == null)) {

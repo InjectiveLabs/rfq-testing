@@ -80,7 +80,7 @@ interface IndexerQuote {
   price: string;
   expiry: number | string; // Unix ms; cast defensively before use
   signature: string; // hex with 0x prefix, as delivered by the indexer
-  sign_mode?: "v2"; // v2 only — v1 is deprecated and will be rejected at launch
+  sign_mode?: "v2"; // v2 only
   evm_chain_id?: number | string;
   maker_subaccount_nonce?: number | string;
   min_fill_quantity?: string;
@@ -94,7 +94,7 @@ interface ContractQuote {
   price: string;
   expiry: { ts: number }; // wrapped enum
   signature: string; // base64
-  sign_mode?: "v2"; // v2 only — v1 is deprecated and will be rejected at launch
+  sign_mode?: "v2"; // v2 only
   evm_chain_id?: number;
   maker_subaccount_nonce?: number;
   min_fill_quantity?: string;

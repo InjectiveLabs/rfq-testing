@@ -640,13 +640,10 @@ type RFQQuoteType struct {
 	PriceCheck bool `protobuf:"varint,21,opt,name=price_check,json=priceCheck,proto3" json:"price_check,omitempty"`
 	// Client ID from the originating request
 	ClientId string `protobuf:"bytes,22,opt,name=client_id,json=clientId,proto3" json:"client_id,omitempty"`
-	// Signature scheme used for the quote: "v1" (raw JSON keccak256) or "v2"
-	// (EIP-712). Defaults to "v1" when omitted, for backward compatibility with
-	// pre-EIP-712 clients.
+	// Signature scheme used for the quote. Required: "v2" (EIP-712).
 	SignMode string `protobuf:"bytes,23,opt,name=sign_mode,json=signMode,proto3" json:"sign_mode,omitempty"`
 	// EVM chain ID embedded in the EIP-712 domain. Required when sign_mode is
-	// "v2"; ignored otherwise. Must match one of the indexer's configured chain
-	// IDs.
+	// "v2". Must match one of the indexer's configured chain IDs.
 	EvmChainId uint64 `protobuf:"varint,24,opt,name=evm_chain_id,json=evmChainId,proto3" json:"evm_chain_id,omitempty"`
 }
 
@@ -1126,13 +1123,10 @@ type RFQProcessedQuoteType struct {
 	PriceCheck bool `protobuf:"varint,21,opt,name=price_check,json=priceCheck,proto3" json:"price_check,omitempty"`
 	// Client ID from the originating request
 	ClientId string `protobuf:"bytes,22,opt,name=client_id,json=clientId,proto3" json:"client_id,omitempty"`
-	// Signature scheme used for the quote: "v1" (raw JSON keccak256) or "v2"
-	// (EIP-712). Defaults to "v1" when omitted, for backward compatibility with
-	// pre-EIP-712 clients.
+	// Signature scheme used for the quote. Required: "v2" (EIP-712).
 	SignMode string `protobuf:"bytes,23,opt,name=sign_mode,json=signMode,proto3" json:"sign_mode,omitempty"`
 	// EVM chain ID embedded in the EIP-712 domain. Required when sign_mode is
-	// "v2"; ignored otherwise. Must match one of the indexer's configured chain
-	// IDs.
+	// "v2". Must match one of the indexer's configured chain IDs.
 	EvmChainId uint64 `protobuf:"varint,24,opt,name=evm_chain_id,json=evmChainId,proto3" json:"evm_chain_id,omitempty"`
 }
 
@@ -1931,9 +1925,8 @@ type CreateConditionalOrderRequest struct {
 
 	// Conditional order fields
 	Order *ConditionalOrderInput `protobuf:"bytes,1,opt,name=order,proto3" json:"order,omitempty"`
-	// Hex-encoded 65-byte ECDSA recoverable signature (r‖s‖v). To produce: build
-	// the canonical JSON object with these fields in exact order, no omitted keys,
-	// null for absent values:
+	// Hex-encoded 65-byte ECDSA recoverable signature (r‖s‖v). To produce:
+	// build the EIP-712 v2 SignedTakerIntent digest with these fields:
 	// version              (uint8)   — protocol version
 	// chain_id             (string)  — e.g. "injective-1"
 	// contract_address     (string)  — RFQ contract bech32 address
@@ -1951,19 +1944,15 @@ type CreateConditionalOrderRequest struct {
 	// min_total_fill_quantity (string) — FPDecimal minimum fill
 	// trigger             (enum)    — {"mark_price_gte":"<price>"} or
 	// {"mark_price_lte":"<price>"}
-	// unfilled_action     (null)    — always null in v1
+	// unfilled_action     (object|null) — bound as (kind, price)
 	// cid                 (*string) — optional client ID, or null
 	// allowed_relayer     (*string) — optional relayer address, or null
-	// Then: signature = secp256k1_sign(Keccak256(canonical_json),
-	// taker_private_key)
+	// Then: signature = secp256k1_sign(EIP-712 v2 digest, taker_private_key)
 	Signature string `protobuf:"bytes,2,opt,name=signature,proto3" json:"signature,omitempty"`
-	// Signature scheme used for the conditional order: "v1" (raw JSON keccak256)
-	// or "v2" (EIP-712). Defaults to "v1" when omitted, for backward compatibility
-	// with pre-EIP-712 clients.
+	// Signature scheme used for the conditional order. Required: "v2" (EIP-712).
 	SignMode string `protobuf:"bytes,3,opt,name=sign_mode,json=signMode,proto3" json:"sign_mode,omitempty"`
 	// EVM chain ID embedded in the EIP-712 domain. Required when sign_mode is
-	// "v2"; ignored otherwise. Must match one of the indexer's configured chain
-	// IDs.
+	// "v2". Must match one of the indexer's configured chain IDs.
 	EvmChainId uint64 `protobuf:"varint,4,opt,name=evm_chain_id,json=evmChainId,proto3" json:"evm_chain_id,omitempty"`
 }
 
@@ -2338,8 +2327,7 @@ type ConditionalOrderResponseType struct {
 	// Terminal timestamp in milliseconds (set when the order reaches a terminal
 	// status: completed, failed, or cancelled)
 	TerminalAt int64 `protobuf:"zigzag64,18,opt,name=terminal_at,json=terminalAt,proto3" json:"terminal_at,omitempty"`
-	// EVM chain ID embedded in the EIP-712 domain at signing time. Zero for v1
-	// (raw JSON) orders.
+	// EVM chain ID embedded in the EIP-712 domain at signing time.
 	EvmChainId uint64 `protobuf:"varint,19,opt,name=evm_chain_id,json=evmChainId,proto3" json:"evm_chain_id,omitempty"`
 }
 
@@ -2663,9 +2651,7 @@ type TakerStreamStreamingRequest struct {
 	ConditionalOrder *ConditionalOrderInput `protobuf:"bytes,3,opt,name=conditional_order,json=conditionalOrder,proto3" json:"conditional_order,omitempty"`
 	// Signature for the conditional order
 	ConditionalOrderSignature string `protobuf:"bytes,4,opt,name=conditional_order_signature,json=conditionalOrderSignature,proto3" json:"conditional_order_signature,omitempty"`
-	// Signature scheme for the conditional order: "v1" (raw JSON keccak256) or
-	// "v2" (EIP-712). Defaults to "v1" when omitted, for backward compatibility
-	// with pre-EIP-712 clients.
+	// Signature scheme for the conditional order. Required: "v2" (EIP-712).
 	ConditionalOrderSignMode string `protobuf:"bytes,5,opt,name=conditional_order_sign_mode,json=conditionalOrderSignMode,proto3" json:"conditional_order_sign_mode,omitempty"`
 	// EVM chain ID embedded in the EIP-712 domain for the conditional order.
 	// Required when conditional_order_sign_mode is "v2".

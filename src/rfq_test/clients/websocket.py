@@ -386,9 +386,8 @@ class TakerStreamClient(BaseStreamClient):
             wait_for_ack: If True, block until conditional_order_ack or error arrives.
             response_timeout: Seconds to wait for ack (default 5.0).
             sign_mode: Signature scheme — must be "v2" for any signature this
-                client produces. The indexer rejects empty values
-                (`value of message.conditional_order_sign_mode must be one of
-                "v1", "v2"`). Default "v2".
+                client produces. The indexer rejects empty or unsupported
+                values. Default "v2".
             evm_chain_id: EVM chain ID used by the v2 EIP-712 domain. Defaults
                 to `order_body["evm_chain_id"]` if present.
 
@@ -899,8 +898,8 @@ class MakerStreamClient(BaseStreamClient):
 
         expiry_ts = int(quote_data.get("expiry", 0))
         min_fill_quantity = quote_data.get("min_fill_quantity")
-        # sign_mode is required by the indexer; an empty string fails validation
-        # with `value of message.sign_mode must be one of "v1", "v2"`.
+        # sign_mode is required by the indexer; an empty string fails
+        # signing-mode validation.
         # We default to v2 — this client only signs v2.
         sign_mode = quote_data.get("sign_mode") or "v2"
         quote_kwargs = {

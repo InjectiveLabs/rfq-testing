@@ -726,7 +726,7 @@ class ConditionalOrderInput:
     All string numeric fields (quantity, margin, worst_price, etc.) use
     human-readable decimal strings — not scaled integers.
 
-    margin must be "0" for v1 reduce-only (close-position) orders.
+    margin must be "0" for protective reduce-only (close-position) orders.
     deadline_ms is a Unix timestamp in milliseconds; max 30 days from now.
     """
     version: int = 0

@@ -4,9 +4,9 @@ RFQ Market Maker Main Flow (gRPC, v2 EIP-712 signing)
 Standalone reference. The signing primitive is inlined so partners can
 vendor this file without depending on rfq_test.
 
-Wire payloads MUST carry `sign_mode: "v2"` — empty values are rejected
-with `value of message.sign_mode must be one of "v1", "v2"`. Full spec:
-PYTHON_BUILDING_GUIDE.md and rfq.inj.so/onboarding.html#sign.
+Wire payloads MUST carry `sign_mode: "v2"` — empty values are rejected by
+signing-mode validation. Full spec: PYTHON_BUILDING_GUIDE.md and
+rfq.inj.so/onboarding.html#sign.
 
 Uses native gRPC MakerStream (bidirectional) instead of WebSocket.
 
